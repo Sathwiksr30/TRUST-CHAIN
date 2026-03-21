@@ -13,6 +13,11 @@ services:
         value: production
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: IPFS_UPLOAD_URL
+        fromService:
+          type: web
+          name: trustchain-backend
+          envVarKey: RENDER_EXTERNAL_URL
 
   # ──────────────────────
   # Node.js Backend Server

@@ -4,11 +4,12 @@ import re
 from docx import Document
 from datetime import datetime
 import requests
+import os
 
 app = Flask(__name__)
 
-# IPFS Backend URL
-IPFS_UPLOAD_URL = "http://localhost:5000/upload-ipfs"
+# IPFS Backend URL — MUST be set to the deployed backend URL in production
+IPFS_UPLOAD_URL = os.environ.get("IPFS_UPLOAD_URL", "http://localhost:5000/upload-ipfs")
 
 # -------------------------------
 # READ DOCX ONLY

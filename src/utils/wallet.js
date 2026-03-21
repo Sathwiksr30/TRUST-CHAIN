@@ -1,16 +1,26 @@
-const HARDHAT_CHAIN_ID_HEX = "0x7a69";
+// Production: Sepolia Testnet | Development: Hardhat Localhost
+const IS_PRODUCTION = process.env.REACT_APP_NETWORK === "sepolia";
 
-const HARDHAT_NETWORK_PARAMS = {
-  chainId: HARDHAT_CHAIN_ID_HEX,
-  chainName: "Hardhat Localhost 31337",
-  nativeCurrency: {
-    name: "Ethereum",
-    symbol: "ETH",
-    decimals: 18,
-  },
-  rpcUrls: ["http://127.0.0.1:8545"],
-  blockExplorerUrls: [],
-};
+const SEPOLIA_CHAIN_ID_HEX = "0xaa36a7"; // 11155111
+const HARDHAT_CHAIN_ID_HEX = "0x7a69";   // 31337
+
+const TARGET_CHAIN_ID_HEX = IS_PRODUCTION ? SEPOLIA_CHAIN_ID_HEX : HARDHAT_CHAIN_ID_HEX;
+
+const NETWORK_PARAMS = IS_PRODUCTION
+  ? {
+      chainId: SEPOLIA_CHAIN_ID_HEX,
+      chainName: "Sepolia Testnet",
+      nativeCurrency: { name: "Ethereum", symbol: "ETH", decimals: 18 },
+      rpcUrls: [process.env.REACT_APP_RPC_URL || "https://rpc.sepolia.org"],
+      blockExplorerUrls: ["https://sepolia.etherscan.io"],
+    }
+  : {
+      chainId: HARDHAT_CHAIN_ID_HEX,
+      chainName: "Hardhat Localhost 31337",
+      nativeCurrency: { name: "Ethereum", symbol: "ETH", decimals: 18 },
+      rpcUrls: ["http://127.0.0.1:8545"],
+      blockExplorerUrls: [],
+    };
 
 export function hasMetaMask() {
   const provider = getMetaMaskProvider();
@@ -66,20 +76,20 @@ export async function ensureHardhatNetwork() {
   if (!provider) return;
 
   const chainId = await provider.request({ method: "eth_chainId" });
-  if (String(chainId).toLowerCase() === HARDHAT_CHAIN_ID_HEX) {
+  if (String(chainId).toLowerCase() === TARGET_CHAIN_ID_HEX) {
     return;
   }
 
   try {
     await provider.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId: HARDHAT_CHAIN_ID_HEX }],
+      params: [{ chainId: TARGET_CHAIN_ID_HEX }],
     });
   } catch (switchError) {
     if (switchError.code === 4902) {
       await provider.request({
         method: "wallet_addEthereumChain",
-        params: [HARDHAT_NETWORK_PARAMS],
+        params: [NETWORK_PARAMS],
       });
       return;
     }

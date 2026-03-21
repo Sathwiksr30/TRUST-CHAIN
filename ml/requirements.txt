@@ -5,3 +5,4 @@ joblib
 pdfplumber
 python-docx
 requests
+gunicorn

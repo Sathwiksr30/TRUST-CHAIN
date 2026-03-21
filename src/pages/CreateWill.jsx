@@ -4,7 +4,11 @@ import './CreateWill.css';
 import { formatIndiaDateTime, toIndiaDateString, toIndiaIsoString } from '../utils/timezone';
 import { getStoredDocuments, syncWillStatuses } from '../utils/willStatusSync';
 
-const API_BASE = process.env.REACT_APP_BACKEND_URL || `http://${window.location.hostname}:5000`;
+const API_BASE = (
+  process.env.REACT_APP_API_BASE_URL ||
+  process.env.REACT_APP_BACKEND_URL ||
+  `http://${window.location.hostname}:5000`
+).replace(/\/$/, "");
 
 const EVM_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

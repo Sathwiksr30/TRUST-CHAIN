@@ -3,7 +3,11 @@ import axios from "axios";
 import './UploadDocument.css';
 import { toIndiaDateString } from '../utils/timezone';
 
-const API_BASE = process.env.REACT_APP_BACKEND_URL || "http://localhost:5000";
+const API_BASE = (
+  process.env.REACT_APP_API_BASE_URL ||
+  process.env.REACT_APP_BACKEND_URL ||
+  "http://localhost:5000"
+).replace(/\/$/, "");
 
 const UploadDocument = () => {
   const [selectedFile, setSelectedFile] = useState(null);
