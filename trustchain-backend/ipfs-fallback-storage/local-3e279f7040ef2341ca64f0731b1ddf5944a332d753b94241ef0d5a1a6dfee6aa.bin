@@ -1,0 +1,54 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-03-21T20:02:44+05:30",
+  "id": "WILL-1774103564905",
+  "name": "sdsd",
+  "description": "Execute after 21 March 2026 at 08:04:00 pm",
+  "testatorName": "asfasfsfasfasaf",
+  "testatorGuardianName": "afafaf",
+  "testatorAge": "18",
+  "testatorAddress": "afasfasf",
+  "religion": "afasfasf",
+  "dob": "2005-08-30",
+  "place": "asasfas",
+  "testatorSignature": "afsasfs",
+  "witnesses": [
+    {
+      "name": "shalini",
+      "address": "hyd",
+      "signature": "shalini"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Time",
+      "value": "2026-03-21T20:04"
+    }
+  ],
+  "owner": "0x8476f015ca3a7e8f5075806128305b31b3470641",
+  "executor": "safasfs",
+  "executorEmail": "challasathwikreddy55@gmail.com",
+  "executorAddress": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+  "beneficiaries": [
+    {
+      "name": "afasfaffd",
+      "email": "23r21a6675@mlrit.ac.in",
+      "walletAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266 ",
+      "share": 100
+    }
+  ],
+  "nominees": [],
+  "assets": [
+    {
+      "type": "Business Interests",
+      "description": "asfas",
+      "value": "100"
+    }
+  ]
+}

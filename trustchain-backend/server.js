@@ -588,10 +588,8 @@ function deriveReleaseTime(payload) {
   // Keep death-condition wills near-immediate, but add a safety buffer so createWill
   // does not revert when block timestamp advances between request handling and mining.
   if (hasDeathCondition(effectiveConditions)) {
-    const deathBuffer = Number.isFinite(WILL_DEATH_RELEASE_BUFFER_SECONDS)
-      ? Math.max(2, Math.floor(WILL_DEATH_RELEASE_BUFFER_SECONDS))
-      : 30;
-    return now + deathBuffer;
+    // Increased to 300s (5m) to be safe against clock skew on Sepolia
+    return now + 300;
   }
 
   const direct = parsePositiveNumber(payload?.releaseTime);
@@ -932,19 +930,22 @@ async function getDigitalWillSignerAndContract() {
     throw new Error('DIGITAL_WILL_CONTRACT_ADDRESS is not a valid wallet/contract address');
   }
 
-  const provider = new ethers.JsonRpcProvider(BLOCKCHAIN_RPC_URL, 31337, {
-    staticNetwork: true
-  });
+  // Auto-detect network is more resilient than hardcoding chainId
+  const provider = new ethers.JsonRpcProvider(BLOCKCHAIN_RPC_URL);
   const wallet = new ethers.Wallet(DIGITAL_WILL_OWNER_PRIVATE_KEY, provider);
 
-  const code = await provider.getCode(DIGITAL_WILL_CONTRACT_ADDRESS);
+  const [code, balance] = await Promise.all([
+    provider.getCode(DIGITAL_WILL_CONTRACT_ADDRESS),
+    provider.getBalance(wallet.address)
+  ]);
+
   if (!code || code === '0x') {
     throw new Error(`No deployed contract found at ${DIGITAL_WILL_CONTRACT_ADDRESS} on ${BLOCKCHAIN_RPC_URL}`);
   }
 
   const contract = new ethers.Contract(DIGITAL_WILL_CONTRACT_ADDRESS, DIGITAL_WILL_ABI, wallet);
 
-  return { provider, wallet, contract };
+  return { provider, wallet, contract, balance };
 }
 
 async function sendContractTx(contractCall, provider, fromAddress, nonceRef) {
@@ -1454,6 +1455,33 @@ async function sendExecutedWillEmailsWithAttachment(willMetadata, txHash) {
   return { sent, failed, skipped };
 }
 
+async function sendWillCreatedEmail(willMetadata) {
+  const transporter = createEmailTransporter();
+  if (!transporter) return;
+
+  const executorEmail = isValidEmail(willMetadata.executorEmail) ? willMetadata.executorEmail.trim() : null;
+  if (!executorEmail) return;
+
+  const html = `
+    <h2>TrustChain: You have been appointed as an Executor</h2>
+    <p>A new Digital Will has been created and you have been appointed as the Executor.</p>
+    <p>Will Name: <strong>${escapeHtml(willMetadata.name || 'Untitled Will')}</strong></p>
+    <p>Will ID: <strong>${escapeHtml(willMetadata.id || 'N/A')}</strong></p>
+    <p>Execution Condition: <strong>${escapeHtml(buildExecutionConditionForWill(willMetadata.conditions))}</strong></p>
+    <p>This will is currently stored on the blockchain and will execute automatically once the conditions are met.</p>
+    <br/>
+    <p>Thank you for using TrustChain.</p>
+  `;
+
+  await transporter.sendMail({
+    from: EMAIL_FROM,
+    to: executorEmail,
+    subject: `TrustChain: Executor Appointment for ${willMetadata.name || 'Digital Will'}`,
+    html
+  });
+  console.log(`[EMAIL] ✓ Executor appointment notification sent to: ${executorEmail}`);
+}
+
 async function sendDeathConditionCreatedEmails(willMetadata, uploadUrl, claimId) {
   const transporter = createEmailTransporter();
   if (!transporter) return;
@@ -1655,9 +1683,7 @@ async function recoverWillSchedulesFromRecordsSafe() {
 
 async function getBlockchainStatus() {
   try {
-    const provider = new ethers.JsonRpcProvider(BLOCKCHAIN_RPC_URL, 31337, {
-      staticNetwork: true
-    });
+    const provider = new ethers.JsonRpcProvider(BLOCKCHAIN_RPC_URL);
     await provider.getBlockNumber();
     return true;
   } catch {
@@ -1677,6 +1703,8 @@ async function executeWillAndNotify(willId, trigger = 'manual') {
     }
     throw error;
   }
+
+  console.log(`[EXECUTE] Will state fetched for ${willId}. Executed: ${currentWillState.executed}, Funded: ${currentWillState.fundedAmountEth} ETH`);
 
   let willMetadata = null;
   if (currentWillState.metadataCid && ipfsInstance) {
@@ -1743,12 +1771,14 @@ async function executeWillAndNotify(willId, trigger = 'manual') {
     return { status: 'SKIPPED', reason: 'Will has no funds. Fund the will before execution.', will: currentWillState };
   }
 
+  console.log(`[EXECUTE] Sending executeWill transaction for ${willId} to Sepolia...`);
   const receipt = await sendContractTx(
-    (nonce) => contract.executeWill(willId, { nonce }),
+    (nonce) => contract.executeWill(willId, { nonce, gasLimit: 500000 }),
     provider,
     wallet.address,
     nonceRef
   );
+  console.log(`[EXECUTE] ✓ executeWill SUCCESS. Transaction Hash: ${receipt.hash}`);
 
   const executedWillState = await getWillState(contract, willId);
 
@@ -1798,14 +1828,16 @@ async function executeWillAndNotify(willId, trigger = 'manual') {
 }
 
 async function handleScheduledWillExecution(willId) {
+  console.log(`[SCHEDULER] Triggering execution for ${willId}...`);
   try {
     const execution = await executeWillAndNotify(willId, 'scheduled');
     if (execution.status === 'EXECUTED') {
-      console.log(`[SCHEDULER] Will ${willId} executed automatically. TX: ${execution.txHash}`);
+      console.log(`[SCHEDULER] ✓ Will ${willId} executed automatically. TX: ${execution.txHash}`);
       return;
     }
 
     if (execution.status === 'SKIPPED' && execution.reason === 'Release time not reached yet') {
+      console.log(`[SCHEDULER] Will ${willId} execution deferred: release time is in the future.`);
       scheduleWillExecution(willId, execution.will.releaseTime);
       return;
     }
@@ -2693,16 +2725,30 @@ app.post('/create-will', async (req, res) => {
       id: willId
     });
 
-    const { provider, wallet, contract } = await getDigitalWillSignerAndContract();
+    const { provider, wallet, contract, balance } = await getDigitalWillSignerAndContract();
+    
+    // Proactive balance check to prevent "could not coalesce" errors from failed gas estimation
+    const autoFundAmountWei = deriveAutoFundAmountWei(payload);
+    const minRequiredWei = autoFundAmountWei + ethers.parseEther('0.005'); // buffer for gas
+    
+    if (balance < minRequiredWei) {
+      return res.status(400).json({
+        status: 'ERROR',
+        message: `Insufficient testnet ETH balance. Needed at least ${ethers.formatEther(minRequiredWei)} ETH but only have ${ethers.formatEther(balance)} ETH.`
+      });
+    }
+
     const nonceRef = {
       value: await provider.getTransactionCount(wallet.address, 'pending')
     };
-    const autoFundAmountWei = deriveAutoFundAmountWei(payload);
 
     const primaryBeneficiary = beneficiaryData.addresses[0];
 
+    // Hardcode gasLimit for Sepolia to bypass estimation failures ("could not coalesce" source)
+    const gasLimit = 500000;
+
     const createReceipt = await sendContractTx(
-      (nonce) => contract.createWill(willId, primaryBeneficiary, cid, releaseTime, { nonce }),
+      (nonce) => contract.createWill(willId, primaryBeneficiary, cid, releaseTime, { nonce, gasLimit }),
       provider,
       wallet.address,
       nonceRef
@@ -2710,7 +2756,7 @@ app.post('/create-will', async (req, res) => {
 
     let setExecutorTxHash = null;
     const setExecutorReceipt = await sendContractTx(
-      (nonce) => contract.setExecutor(willId, executorAddress, { nonce }),
+      (nonce) => contract.setExecutor(willId, executorAddress, { nonce, gasLimit }),
       provider,
       wallet.address,
       nonceRef
@@ -2724,7 +2770,7 @@ app.post('/create-will', async (req, res) => {
           willId,
           beneficiaryData.addresses,
           beneficiaryData.sharesBps,
-          { nonce }
+          { nonce, gasLimit }
         ),
         provider,
         wallet.address,
@@ -2736,7 +2782,7 @@ app.post('/create-will', async (req, res) => {
     let fundWillTxHash = null;
     if (autoFundAmountWei > 0n) {
       const fundWillReceipt = await sendContractTx(
-        (nonce) => contract.fundWill(willId, { value: autoFundAmountWei, nonce }),
+        (nonce) => contract.fundWill(willId, { value: autoFundAmountWei, nonce, gasLimit }),
         provider,
         wallet.address,
         nonceRef
@@ -2796,6 +2842,11 @@ app.post('/create-will', async (req, res) => {
         status: claim.status
       };
     } else {
+      try {
+        await sendWillCreatedEmail(metadata);
+      } catch (mailError) {
+        console.error('[EMAIL] Will created notification failed:', mailError.message);
+      }
       scheduleWillExecution(willId, willState.releaseTime);
     }
 
@@ -2835,7 +2886,12 @@ app.post('/create-will', async (req, res) => {
       warnings
     });
   } catch (error) {
-    console.error('Create will on-chain error:', error);
+    console.error('CRITICAL: Create will on-chain error caught in route:');
+    console.error('- Message:', error.message);
+    console.error('- Code:', error.code);
+    console.error('- Data:', error.data);
+    console.error('- Error Detail:', JSON.stringify(error, null, 2));
+    
     return res.status(500).json({
       status: 'ERROR',
       message: formatBlockchainError(error)
@@ -3121,7 +3177,15 @@ const server = app.listen(PORT, async () => {
 
   await recoverWillSchedulesFromRecordsSafe();
   
-  console.log(`✓ Blockchain: Ready`);
+  let blockchainStatus = 'Ready';
+  try {
+    const { wallet, balance } = await getDigitalWillSignerAndContract();
+    blockchainStatus = `Ready (Wallet: ${wallet.address}, Balance: ${ethers.formatEther(balance)} ETH)`;
+  } catch (error) {
+    blockchainStatus = `Error (${error.message})`;
+  }
+
+  console.log(`✓ Blockchain: ${blockchainStatus}`);
   console.log(`✓ Uploads: ${uploadsDir}`);
   console.log("=".repeat(60));
   console.log("\n📋 API Endpoints:");

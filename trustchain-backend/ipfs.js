@@ -103,40 +103,70 @@ export async function stopIPFS() {
 
 // Add file to IPFS
 export async function addFile(fileBuffer, fileName) {
+  // Always store a redundant local copy for persistence across restarts
+  const fallbackCid = await addFileToFallback(fileBuffer);
+  
   if (!fs) {
-    return addFileToFallback(fileBuffer);
+    return fallbackCid;
   }
   
   try {
     const cid = await fs.addBytes(fileBuffer);
-    return cid.toString();
+    const cidStr = cid.toString();
+    
+    // Save mapping so we can find it by IPFS CID in the fallback as well
+    const mappingPath = path.join(fallbackDir, `${cidStr}.ipfs_map`);
+    fsSync.writeFileSync(mappingPath, fallbackCid);
+    
+    return cidStr;
   } catch (error) {
-    console.error('❌ IPFS addFile failed:', error.message);
-    return addFileToFallback(fileBuffer);
+    console.warn('⚠️  IPFS addBytes failed (falling back to local):', error.message);
+    return fallbackCid;
   }
 }
 
 // Get file from IPFS
 export async function getFile(cid) {
+  if (!cid) throw new Error('CID is required');
+  
+  // 1. Check direct local fallback first
   if (isFallbackCid(cid)) {
     return getFileFromFallback(cid);
   }
 
+  // 2. Check if it's an IPFS CID that we have a local mapping for
+  const mappingPath = path.join(fallbackDir, `${cid}.ipfs_map`);
+  if (fsSync.existsSync(mappingPath)) {
+    const fallbackCid = fsSync.readFileSync(mappingPath, 'utf8').trim();
+    try {
+      return await getFileFromFallback(fallbackCid);
+    } catch {}
+  }
+
+  // 3. Try to get from Helia network if available
   if (!fs) {
-    throw new Error('IPFS not initialized and CID is not local fallback data');
+    throw new Error('IPFS not initialized and CID not found in local fallback storage');
   }
   
   try {
+    // Add a timeout to prevent hanging the server on missing records
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    
     const chunks = [];
-    for await (const chunk of fs.cat(cid)) {
-      chunks.push(chunk);
+    try {
+      for await (const chunk of fs.cat(cid, { signal: controller.signal })) {
+        chunks.push(chunk);
+      }
+    } finally {
+      clearTimeout(timeout);
     }
+    
     return Buffer.concat(chunks);
   } catch (error) {
-    console.error('❌ IPFS getFile failed:', error.message);
-    if (isFallbackCid(cid)) {
-      return getFileFromFallback(cid);
-    }
+    const isTimeout = error.name === 'AbortError' || error.message?.includes('aborted');
+    console.error(`❌ IPFS getFile failed for ${cid}:`, isTimeout ? 'Timeout (10s)' : error.message);
+    
     throw error;
   }
 }

@@ -467,7 +467,7 @@ function CreateWill({ onNavigate }) {
       beneficiaries: formData.beneficiaries,
       nominees: formData.nominees,
       assets: formData.assets,
-      amountEth: '1',
+      amountEth: '0.01',
       createdAt: toIndiaIsoString(),
       ...(releaseTime ? { releaseTime } : {})
     };
