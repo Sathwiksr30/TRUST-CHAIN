@@ -34,9 +34,10 @@
     "mammoth": "^1.11.0",
     "multer": "^2.0.2",
     "nodemailer": "^8.0.2",
-    "pdfkit": "^0.17.2",
     "pdf-parse": "^2.4.5",
-    "pinata": "^2.5.5"
+    "pdfkit": "^0.17.2",
+    "pinata": "^2.5.5",
+    "resend": "^6.9.4"
   },
   "overrides": {
     "nanoid": "5.1.6",

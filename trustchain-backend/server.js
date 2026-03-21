@@ -11,6 +11,7 @@ import ipfs from "./ipfs.js";
 import mammoth from "mammoth";
 import axios from "axios";
 import { ethers } from "ethers";
+import { Resend } from "resend";
 
 dotenv.config();
 
@@ -41,8 +42,11 @@ const EMAIL_HOST = process.env.EMAIL_HOST || 'smtp.gmail.com';
 const EMAIL_PORT = Number(process.env.EMAIL_PORT || 587);
 const EMAIL_USER = process.env.EMAIL_USER || '';
 const EMAIL_PASS = process.env.EMAIL_PASS || '';
-const EMAIL_FROM = process.env.EMAIL_FROM || (EMAIL_USER ? `TrustChain <${EMAIL_USER}>` : 'TrustChain <noreply@trustchain.io>');
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const EMAIL_FROM = process.env.EMAIL_FROM || 'TrustChain <onboarding@resend.dev>';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+const resendClient = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 const MAX_TIMER_DELAY_MS = 2147483647;
 const INDIA_TIME_ZONE = 'Asia/Kolkata';
 const SUPPORTED_WILL_CONDITIONS = new Set(['Time', 'Age', 'Death', 'Multiple']);
@@ -1023,13 +1027,30 @@ function disableWillScheduleInRecords(willId, reason) {
 // ==========================================
 
 function createEmailTransporter() {
-  if (!EMAIL_USER || !EMAIL_PASS) return null;
-  return nodemailer.createTransport({
-    host: EMAIL_HOST,
-    port: EMAIL_PORT,
-    secure: EMAIL_PORT === 465,
-    auth: { user: EMAIL_USER, pass: EMAIL_PASS }
-  });
+  // Legacy function for Nodemailer, no longer used.
+  return null;
+}
+
+async function sendEmailViaResend({ to, subject, html, text, attachments = [] }) {
+  if (!resendClient) {
+    console.warn("[RESEND] API Key missing. Skipping email.");
+    return { error: 'RESEND_API_KEY_MISSING' };
+  }
+
+  try {
+    const response = await resendClient.emails.send({
+      from: EMAIL_FROM,
+      to,
+      subject,
+      html,
+      text,
+      attachments
+    });
+    return response;
+  } catch (err) {
+    console.error(`[RESEND] Failed to send to ${to}:`, err.message);
+    throw err;
+  }
 }
 
 function buildConditionSummary(conditions) {
@@ -1437,7 +1458,7 @@ async function sendExecutedWillEmailsWithAttachment(willMetadata, txHash) {
     return { sent: 0, failed: 0, skipped };
   }
 
-  console.log(`[EMAIL] Sending executed will PDF to: ${uniqueRecipients.join(', ')}`);
+  console.log(`[RESEND] Sending executed will PDF to: ${uniqueRecipients.join(', ')}`);
   const pdfBuffer = await generateTrustChainPdfBuffer(willMetadata, txHash);
   const willId = willMetadata?.id || 'Will';
 
@@ -1484,8 +1505,7 @@ async function sendExecutedWillEmailsWithAttachment(willMetadata, txHash) {
            <p>Please find the official <strong>TrustChain.pdf</strong> document attached to this email.</p>
            <p>Will ID: <strong>${escapeHtml(willId)}</strong><br/>Blockchain TX: <strong>${escapeHtml(txHash || 'N/A')}</strong></p>`;
 
-      await transporter.sendMail({
-        from: EMAIL_FROM,
+      await sendEmailViaResend({
         to: email,
         subject,
         text: bodyText,
@@ -1494,14 +1514,13 @@ async function sendExecutedWillEmailsWithAttachment(willMetadata, txHash) {
           {
             filename: 'TrustChain.pdf',
             content: pdfBuffer,
-            contentType: 'application/pdf'
           }
         ]
       });
       sent += 1;
     } catch (err) {
       failed += 1;
-      console.error(`[EMAIL] Failed to send executed will PDF to ${email}:`, err.message);
+      console.error(`[RESEND] Failed to send executed will PDF to ${email}:`, err.message);
     }
   }));
 
@@ -1578,8 +1597,7 @@ async function sendStakeholderCreationEmails(willMetadata, { uploadUrl = null, c
         </div>
       `;
 
-      await transporter.sendMail({
-        from: EMAIL_FROM,
+      await sendEmailViaResend({
         to: email,
         subject,
         html: bodyHtml
@@ -1587,7 +1605,7 @@ async function sendStakeholderCreationEmails(willMetadata, { uploadUrl = null, c
       sent += 1;
     } catch (err) {
       failed += 1;
-      console.error(`[NOTIFY] Stakeholder notification failed for ${email}:`, err.message);
+      console.error(`[RESEND] Stakeholder notification failed for ${email}:`, err.message);
     }
   }));
 
@@ -1630,15 +1648,16 @@ async function sendExecutorApprovalEmail(
     <p style="font-size: 13px; color: #718096;">Claim ID: ${escapeHtml(claimId)} | Secure Token: ${escapeHtml(claimToken || 'N/A')}</p>
   `;
 
-  await transporter.sendMail({
-    from: EMAIL_FROM,
+  await sendEmailViaResend({
     to: executorEmail,
-    subject: `TrustChain: Action Required for Will ${willMetadata.id || ''}`,
+    subject: `TrustChain Executor: Action Required for Will Approval`,
     html,
     attachments: certificateFilePath
-      ? [{ filename: certificateFileName || 'death-certificate', path: certificateFilePath }]
+      ? [{ filename: certificateFileName, path: certificateFilePath }]
       : []
   });
+
+  console.log(`[RESEND] ✓ Executor approval request sent to: ${executorEmail}`);
 }
 
 async function sendFinalWillDataEmails(willMetadata, txHash) {
@@ -1676,8 +1695,7 @@ async function sendReadyToClaimEmails(willMetadata) {
 
   await Promise.allSettled(uniqueRecipients.map(async (email) => {
     try {
-      await transporter.sendMail({
-        from: EMAIL_FROM,
+      await sendEmailViaResend({
         to: email,
         subject: `TrustChain: Will Ready for Execution (${willId})`,
         html
@@ -1685,7 +1703,7 @@ async function sendReadyToClaimEmails(willMetadata) {
       sent += 1;
     } catch (err) {
       failed += 1;
-      console.error(`[EMAIL] Failed to send claim alert to ${email}:`, err.message);
+      console.error(`[RESEND] Failed to send claim alert to ${email}:`, err.message);
     }
   }));
 
