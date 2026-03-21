@@ -1,4 +1,7 @@
 services:
+  # ─────────────────
+  # Python ML Service
+  # ─────────────────
   - type: web
     name: trustchain-ml
     env: python
@@ -8,18 +11,53 @@ services:
     envVars:
       - key: FLASK_ENV
         value: production
+      - key: PYTHON_VERSION
+        value: 3.11.0
 
+  # ──────────────────────
+  # Node.js Backend Server
+  # ──────────────────────
   - type: web
     name: trustchain-backend
     env: node
     rootDir: trustchain-backend
     buildCommand: npm install
-    startCommand: npm run start:server
+    startCommand: node server.js
     envVars:
       - key: NODE_ENV
         value: production
+      - key: PORT
+        value: 10000
       - key: ML_SERVICE_URL
         fromService:
           type: web
           name: trustchain-ml
           envVarKey: RENDER_EXTERNAL_URL
+      # ── Blockchain (fill in after deploying to Sepolia) ──
+      - key: BLOCKCHAIN_RPC_URL
+        sync: false
+      - key: BLOCKCHAIN_CHAIN_ID
+        value: 11155111
+      - key: DIGITAL_WILL_CONTRACT_ADDRESS
+        sync: false
+      - key: DIGITAL_WILL_OWNER_PRIVATE_KEY
+        sync: false
+      # ── Email (optional, for notifications) ──
+      - key: EMAIL_HOST
+        value: smtp.gmail.com
+      - key: EMAIL_PORT
+        value: 587
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false
+      # ── Will Settings ──
+      - key: WILL_DEFAULT_RELEASE_DELAY_SECONDS
+        value: 86400
+      - key: WILL_AUTO_FUND_ETH
+        value: "0.01"
+      - key: WILL_MIN_EXECUTION_FUND_ETH
+        value: "0.01"
+      - key: IPFS_ENABLED
+        value: "false"
+
