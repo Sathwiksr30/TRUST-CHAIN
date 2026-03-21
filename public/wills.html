@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TrustChain - Digital Wills</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+        }
+
+        /* Navigation */
+        .navbar {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 1rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+
+        .nav-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .nav-logo h2 {
+            color: #667eea;
+            font-weight: 700;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .nav-btn {
+            padding: 0.5rem 1rem;
+            border: 2px solid #667eea;
+            background: transparent;
+            color: #667eea;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .nav-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .nav-btn.primary {
+            background: #667eea;
+            color: white;
+        }
+
+        /* Coming Soon Content */
+        .coming-soon {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 4rem 2rem;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            margin-top: 100px;
+        }
+
+        .coming-soon-icon {
+            font-size: 5rem;
+            margin-bottom: 2rem;
+            opacity: 0.7;
+        }
+
+        .coming-soon h1 {
+            font-size: 3rem;
+            color: #667eea;
+            margin-bottom: 1rem;
+        }
+
+        .coming-soon p {
+            font-size: 1.2rem;
+            color: #666;
+            margin-bottom: 2rem;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .feature-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-top: 3rem;
+            text-align: left;
+        }
+
+        .feature-item {
+            background: #f8f9fa;
+            padding: 1.5rem;
+            border-radius: 15px;
+            border-left: 4px solid #667eea;
+        }
+
+        .feature-item h3 {
+            color: #667eea;
+            margin-bottom: 0.5rem;
+        }
+
+        .feature-item p {
+            color: #666;
+            line-height: 1.6;
+        }
+
+        .notify-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 1rem 2rem;
+            border-radius: 25px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 2rem;
+        }
+
+        .notify-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+        }
+
+        @media (max-width: 768px) {
+            .nav-links {
+                gap: 0.5rem;
+            }
+
+            .nav-btn {
+                padding: 0.4rem 0.8rem;
+                font-size: 0.9rem;
+            }
+
+            .coming-soon {
+                padding: 3rem 1.5rem;
+                margin-top: 120px;
+            }
+
+            .coming-soon h1 {
+                font-size: 2.5rem;
+            }
+
+            .feature-list {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
+
+            .navbar {
+                padding: 0.75rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Navigation -->
+        <nav class="navbar">
+            <div class="nav-container">
+                <div class="nav-logo">
+                    <h2>TrustChain</h2>
+                </div>
+                <div class="nav-links">
+                    <button class="nav-btn" onclick="window.close()">Home</button>
+                    <button class="nav-btn" onclick="window.open('/dashboard.html', '_blank')">Dashboard</button>
+                    <button class="nav-btn" onclick="window.open('/verify.html', '_blank')">Verify Document</button>
+                    <button class="nav-btn" onclick="window.location.reload()">Digital Wills</button>
+                    <button class="nav-btn">Sign In</button>
+                    <button class="nav-btn primary">Get Started</button>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Coming Soon Content -->
+        <div class="coming-soon">
+            <div class="coming-soon-icon">📜</div>
+            <h1>Digital Wills</h1>
+            <p>Feature to be added</p>
+
+            <p style="margin-top: 2rem; font-size: 1rem; color: #888;">
+                We're working on bringing you the most secure digital wills platform powered by blockchain technology.
+                This feature will allow you to create legally-binding digital wills with smart contracts that execute automatically.
+            </p>
+
+            <div class="feature-list">
+                <div class="feature-item">
+                    <h3>Smart Contract Wills</h3>
+                    <p>Create digital wills that automatically execute based on predefined conditions using blockchain smart contracts.</p>
+                </div>
+                <div class="feature-item">
+                    <h3>Multi-Signature Security</h3>
+                    <p>Require multiple authorized signatures for will execution, ensuring maximum security and preventing unauthorized access.</p>
+                </div>
+                <div class="feature-item">
+                    <h3>Conditional Execution</h3>
+                    <p>Set up wills that execute automatically when specific conditions are met, such as time-based triggers or event-based conditions.</p>
+                </div>
+                <div class="feature-item">
+                    <h3>Legal Compliance</h3>
+                    <p>Built with legal compliance in mind, ensuring your digital wills meet all regulatory requirements and are legally binding.</p>
+                </div>
+            </div>
+
+            <button class="notify-btn" onclick="alert('Thank you! We\'ll notify you when Digital Wills is available.')">
+                Notify Me When Available
+            </button>
+        </div>
+    </div>
+</body>
+</html>

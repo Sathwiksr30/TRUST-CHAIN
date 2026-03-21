@@ -1,0 +1,46 @@
+{
+  "name": "trustchain-backend",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node bootstrap-dev.js",
+    "start:server": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@chainsafe/libp2p-noise": "^17.0.0",
+    "@chainsafe/libp2p-yamux": "^8.0.1",
+    "@helia/unixfs": "^7.0.4",
+    "@libp2p/bootstrap": "^12.0.13",
+    "@libp2p/identify": "^4.0.12",
+    "@libp2p/tcp": "^11.0.12",
+    "@libp2p/websockets": "^10.1.5",
+    "axios": "^1.13.6",
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.4",
+    "ethers": "^6.16.0",
+    "express": "^5.2.1",
+    "form-data": "^4.0.5",
+    "helia": "^6.0.21",
+    "ipfs-http-client": "^60.0.1",
+    "ipfsd-ctl": "^16.0.0",
+    "kubo-rpc-client": "^6.1.0",
+    "libp2p": "^3.1.5",
+    "mammoth": "^1.11.0",
+    "multer": "^2.0.2",
+    "nodemailer": "^8.0.2",
+    "pdfkit": "^0.17.2",
+    "pdf-parse": "^2.4.5",
+    "pinata": "^2.5.5"
+  },
+  "overrides": {
+    "nanoid": "5.1.6",
+    "parse-duration": "2.1.5",
+    "undici": "7.24.5"
+  }
+}

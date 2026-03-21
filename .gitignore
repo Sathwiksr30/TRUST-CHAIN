@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production
+build/
+dist/
+
+# Environment Variables (NEVER commit these)
+.env
+.env.local
+.env.production
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Uploads & local storage
+trustchain-backend/uploads/
+trustchain-backend/cid-storage.json
+trustchain-backend/verification-records.json
+trustchain-backend/blockchain-records.json
+trustchain-backend/blockchain-records-archive.json
+trustchain-backend/death-claims.json
+
+# Blockchain build artifacts
+blockchain/cache/
+blockchain/artifacts/
+
+# ML uploads
+ml/uploads/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pkl
+*.pyd
+.Python

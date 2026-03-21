@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TrustChain ML Verification</title>
+    <style>
+        :root {
+            --bg1: #0f172a;
+            --bg2: #1e293b;
+            --card: #ffffff;
+            --text: #0f172a;
+            --muted: #475569;
+            --accent: #0ea5e9;
+            --ok: #16a34a;
+            --bad: #dc2626;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            color: var(--text);
+            min-height: 100vh;
+            background: radial-gradient(circle at 10% 10%, #1d4ed8 0%, var(--bg1) 38%),
+                                    linear-gradient(135deg, var(--bg1), var(--bg2));
+            display: grid;
+            place-items: center;
+            padding: 16px;
+        }
+
+        .card {
+            width: 100%;
+            max-width: 760px;
+            background: var(--card);
+            border-radius: 14px;
+            padding: 22px;
+            box-shadow: 0 20px 45px rgba(0, 0, 0, 0.28);
+        }
+
+        h1 {
+            margin: 0 0 8px;
+            font-size: 1.6rem;
+        }
+
+        p.top {
+            margin: 0 0 18px;
+            color: var(--muted);
+            font-size: 0.95rem;
+        }
+
+        .row {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        label {
+            font-size: 0.9rem;
+            color: #1e293b;
+            font-weight: 600;
+        }
+
+        input[type="file"],
+        input[type="text"] {
+            width: 100%;
+            padding: 11px;
+            border: 1px solid #cbd5e1;
+            border-radius: 10px;
+            font-size: 0.95rem;
+        }
+
+        button {
+            width: 100%;
+            border: 0;
+            border-radius: 10px;
+            padding: 12px;
+            font-weight: 700;
+            background: var(--accent);
+            color: #fff;
+            cursor: pointer;
+            font-size: 0.98rem;
+            margin-top: 8px;
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        #statusLine {
+            margin-top: 12px;
+            color: var(--muted);
+            font-size: 0.92rem;
+            min-height: 20px;
+        }
+
+        #resultBox {
+            display: none;
+            margin-top: 14px;
+            border-radius: 10px;
+            padding: 14px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+        }
+
+        #resultHeader {
+            margin: 0 0 10px;
+            font-size: 1.05rem;
+        }
+
+        .kv {
+            margin: 6px 0;
+            word-break: break-word;
+            font-size: 0.92rem;
+        }
+
+        .label {
+            font-weight: 700;
+            margin-right: 6px;
+        }
+
+        pre {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 8px;
+            background: #0b1220;
+            color: #d1fae5;
+            overflow: auto;
+            font-size: 0.8rem;
+        }
+
+        .ok { color: var(--ok); }
+        .bad { color: var(--bad); }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>TrustChain ML Verification</h1>
+        <p class="top">Upload a PDF or DOCX to run complete ML verification, hashing, IPFS upload, and blockchain record flow.</p>
+
+        <div class="row">
+            <label for="document">Document (PDF or DOCX)</label>
+            <input id="document" type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+        </div>
+
+        <button id="runBtn">Run Full ML Verification</button>
+        <div id="statusLine"></div>
+
+        <div id="resultBox">
+            <h2 id="resultHeader"></h2>
+            <div class="kv"><span class="label">Document ID:</span><span id="docId"></span></div>
+            <div class="kv"><span class="label">File:</span><span id="fileName"></span></div>
+            <div class="kv"><span class="label">Status:</span><span id="status"></span></div>
+            <div class="kv"><span class="label">Classification:</span><span id="classification"></span></div>
+            <div class="kv"><span class="label">Confidence:</span><span id="confidence"></span></div>
+            <div class="kv"><span class="label">SHA-256:</span><span id="sha"></span></div>
+            <div class="kv"><span class="label">IPFS CID:</span><span id="cid"></span></div>
+            <div class="kv"><span class="label">Transaction Hash:</span><span id="tx"></span></div>
+            <pre id="rawJson"></pre>
+        </div>
+    </div>
+
+    <script>
+        const runBtn = document.getElementById("runBtn");
+        const fileInput = document.getElementById("document");
+        const statusLine = document.getElementById("statusLine");
+        const resultBox = document.getElementById("resultBox");
+
+        function setStatus(text, kind) {
+            statusLine.textContent = text;
+            statusLine.className = kind || "";
+        }
+
+        runBtn.addEventListener("click", async () => {
+            const file = fileInput.files[0];
+            if (!file) {
+                setStatus("Select a PDF or DOCX file first.", "bad");
+                return;
+            }
+
+            const name = file.name.toLowerCase();
+            if (!name.endsWith(".pdf") && !name.endsWith(".docx")) {
+                setStatus("Only PDF and DOCX are supported.", "bad");
+                return;
+            }
+
+            runBtn.disabled = true;
+            setStatus("Running full ML verification...", "");
+            resultBox.style.display = "none";
+
+            try {
+                const formData = new FormData();
+                formData.append("document", file);
+
+                const res = await fetch("/verify", {
+                    method: "POST",
+                    body: formData
+                });
+
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data.message || data.error || "Upload failed");
+                }
+
+                const verified = data.status === "VERIFIED";
+                document.getElementById("resultHeader").textContent = verified ? "Verification Completed" : "Verification Rejected";
+                document.getElementById("resultHeader").className = verified ? "ok" : "bad";
+
+                document.getElementById("docId").textContent = data.documentId || "-";
+                document.getElementById("fileName").textContent = data.fileName || "-";
+                document.getElementById("status").textContent = data.status || "-";
+                document.getElementById("classification").textContent = data.verification?.classification || "-";
+                document.getElementById("confidence").textContent = data.verification?.confidence || "-";
+                document.getElementById("sha").textContent = data.sha256Hash || "-";
+                document.getElementById("cid").textContent = data.ipfs?.cid || "-";
+                document.getElementById("tx").textContent = data.blockchain?.transactionHash || "-";
+                document.getElementById("rawJson").textContent = JSON.stringify(data, null, 2);
+
+                resultBox.style.display = "block";
+                setStatus("Done.", "ok");
+            } catch (err) {
+                setStatus("Error: " + err.message, "bad");
+            } finally {
+                runBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

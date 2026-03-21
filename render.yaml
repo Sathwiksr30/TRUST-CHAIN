@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: trustchain-ml
+    env: python
+    rootDir: ml
+    buildCommand: pip install -r requirements.txt && pip install gunicorn
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: FLASK_ENV
+        value: production
+
+  - type: web
+    name: trustchain-backend
+    env: node
+    rootDir: trustchain-backend
+    buildCommand: npm install
+    startCommand: npm run start:server
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ML_SERVICE_URL
+        fromService:
+          type: web
+          name: trustchain-ml
+          envVarKey: RENDER_EXTERNAL_URL
