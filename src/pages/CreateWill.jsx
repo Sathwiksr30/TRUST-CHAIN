@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { ethers } from 'ethers';
 import './CreateWill.css';
 import { formatIndiaDateTime, toIndiaDateString, toIndiaIsoString } from '../utils/timezone';
 import { getStoredDocuments, syncWillStatuses } from '../utils/willStatusSync';
+import contractABI from "../abi/DigitalWill.json";
+
+const CONTRACT_ADDRESS = "0x009B1e24Eb61B7B63DaFCC4bbDE86B17Ded48048";
 
 const API_BASE = (
   process.env.REACT_APP_API_BASE_URL ||
@@ -234,9 +238,67 @@ function validateWillPayload(formData) {
   return null;
 }
 
+async function createWillOnChain(willData, setProgress) {
+  if (!window.ethereum) {
+    alert("MetaMask not found. Please install MetaMask to use TrustChain.");
+    throw new Error("MetaMask not found");
+  }
+
+  const provider = new ethers.BrowserProvider(window.ethereum);
+  
+  // Verify user is on Sepolia (11155111)
+  const network = await provider.getNetwork();
+  if (network.chainId !== 11155111n) {
+    try {
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: '0xaa36a7' }], // 11155111 in hex
+      });
+    } catch (switchError) {
+      alert("Please switch your MetaMask network to Sepolia to continue.");
+      throw new Error("Invalid Network");
+    }
+  }
+
+  const signer = await provider.getSigner();
+  const contract = new ethers.Contract(
+    CONTRACT_ADDRESS,
+    contractABI.abi,
+    signer
+  );
+
+  if (setProgress) setProgress("1/2: Confirming Will Creation...");
+  console.log(`[BLOCKCHAIN] Creating will ${willData.willId} on-chain...`);
+
+  // 1️⃣ Step 3.1: Create Will (0 ETH)
+  // Gas Limit set to 300,000 to be extremely safe for Sepolia congestion
+  const beneficiary = String(willData.beneficiary || "").trim();
+  const createTx = await contract.createWill(
+    willData.willId,
+    beneficiary,
+    willData.cid,
+    willData.releaseTime,
+    { gasLimit: 300000 } 
+  );
+  await createTx.wait();
+  console.log("✅ Will Created on-chain");
+
+  if (setProgress) setProgress("2/2: Confirming Execution Funding (0.0003 ETH)...");
+  
+  // 2️⃣ Step 3.2: Fund Will (0.0003 ETH)
+  const fundTx = await contract.fundWill(willData.willId, {
+    value: ethers.parseEther("0.0003"),
+    gasLimit: 150000 
+  });
+  await fundTx.wait();
+  console.log("✅ Will Funded on-chain");
+}
+
 function CreateWill({ onNavigate }) {
   const [currentStep, setCurrentStep] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isCreating, setCreating] = useState(false);
+  const [progressMessage, setProgressMessage] = useState("");
+  const [isLoading, setLoading] = useState(false);
   const [userWills, setUserWills] = useState([]);
   const [formData, setFormData] = useState({
     willName: '',
@@ -267,7 +329,7 @@ function CreateWill({ onNavigate }) {
       onNavigate('home');
       return;
     }
-    setIsLoading(false);
+    setLoading(false);
   }, [currentUser, onNavigate]);
 
   useEffect(() => {
@@ -404,7 +466,6 @@ function CreateWill({ onNavigate }) {
     });
   };
 
-  const [creating, setCreating] = useState(false);
 
   const handleCreateWill = async () => {
     const validationError = validateWillPayload(formData);
@@ -474,25 +535,52 @@ function CreateWill({ onNavigate }) {
 
     setCreating(true);
     try {
+      // 1. Backend: Upload to IPFS / Generate metadata
       const res = await axios.post(
         `${API_BASE}/create-will`,
-        newWill,
+        { ...newWill, ipfsOnly: true },
         { headers: { 'x-api-key': 'trustchain_dummy_key' } }
       );
 
-      const blockchain = res.data?.blockchain || {};
+      const resData = res.data;
+      const cid = resData.cid || resData.metadataCid;
+
+      // 2. Blockchain: MetaMask transaction
+      await createWillOnChain({
+        willId: resData.willId,
+        beneficiary: (formData.beneficiaries[0].walletAddress || "").trim(),
+        cid: cid,
+        releaseTime: resData.releaseTime || 0
+      }, setProgressMessage);
+
+      const blockchain = {
+        executed: false,
+        revoked: false,
+        ownerAddress: 'MetaMask Wallet',
+        metadataCid: cid,
+        contractAddress: CONTRACT_ADDRESS
+      };
       const createdWill = {
         ...newWill,
-        status: blockchain.executed ? 'Successful' : (blockchain.revoked ? 'Revoked' : 'Pending'),
+        status: 'Active',
         blockchain,
-        metadataCid: res.data?.metadataCid || null,
-        contractAddress: res.data?.contractAddress || null,
-        ownerAddress: res.data?.ownerAddress || null,
+        metadataCid: cid,
+        contractAddress: CONTRACT_ADDRESS,
+        ownerAddress: 'MetaMask Wallet',
       };
       const existingDocs = JSON.parse(localStorage.getItem('trustchain_documents') || '[]');
       localStorage.setItem('trustchain_documents', JSON.stringify([...existingDocs, createdWill]));
 
-      alert(res.data?.message || 'Digital Will created successfully! Status: Pending.');
+      // 3. Trigger backend notification (Emails) AFTER successful blockchain confirmation
+      try {
+        await axios.post(`${API_BASE}/will/${encodeURIComponent(resData.willId)}/notify-creation`);
+        console.log("Successfully triggered post-creation notifications.");
+      } catch (notifyErr) {
+        console.error("Failed to trigger post-creation notifications:", notifyErr.message);
+        // We don't block the UI here as the will is already on-chain
+      }
+
+      alert('Digital Will created successfully! Your transaction was confirmed on the blockchain.');
       setCurrentStep(0);
       setFormData({
         willName: '',
@@ -515,8 +603,19 @@ function CreateWill({ onNavigate }) {
       });
     } catch (err) {
       console.error('Create will error', err);
-      const backendMessage = err?.response?.data?.message;
-      alert(backendMessage || 'Could not create will on blockchain.');
+      
+      // Extract better error message from Ethers or Axios
+      let errorMessage = 'Could not create will on blockchain.';
+      
+      if (err?.code === 'ACTION_REJECTED') {
+        errorMessage = '❌ Transaction cancelled by user.';
+      } else if (err?.info?.error?.message || err?.error?.message || err?.message) {
+        errorMessage = `❌ Blockchain Error: ${err?.info?.error?.message || err?.error?.message || err?.message}`;
+      } else if (err?.response?.data?.message) {
+        errorMessage = `❌ Backend Error: ${err.response.data.message}`;
+      }
+      
+      alert(errorMessage);
     } finally {
       setCreating(false);
     }
@@ -524,12 +623,19 @@ function CreateWill({ onNavigate }) {
 
   const CurrentComponent = steps[currentStep].component;
 
-  if (isLoading) {
+  if (isLoading || isCreating) {
     return (
       <div className="page create-will-container">
         <div style={{ textAlign: 'center', padding: '60px 20px' }}>
           <i className="fas fa-spinner fa-spin" style={{ fontSize: '40px', color: '#667eea' }}></i>
-          <p style={{ marginTop: '20px', color: '#666' }}>Loading...</p>
+          <p style={{ marginTop: '20px', color: '#667eea', fontWeight: 'bold' }}>
+            {isCreating ? progressMessage || "Processing Transaction..." : "Loading..."}
+          </p>
+          {isCreating && (
+            <p style={{ marginTop: '10px', color: '#666', fontSize: '14px' }}>
+              Please check your MetaMask for confirmation prompts.
+            </p>
+          )}
         </div>
       </div>
     );
@@ -544,7 +650,7 @@ function CreateWill({ onNavigate }) {
       <CurrentComponent
         userWills={userWills}
         formData={formData}
-        creating={creating}
+        creating={isCreating}
         onInputChange={handleInputChange}
         onNext={handleNext}
         onPrevious={handlePrevious}

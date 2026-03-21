@@ -1,0 +1,54 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-03-21T22:48:27+05:30",
+  "id": "WILL-1774113507545",
+  "name": "sddsf",
+  "description": "Execute after 21 March 2026 at 10:49:00 pm",
+  "testatorName": "scscs",
+  "testatorGuardianName": "cvdscdsc",
+  "testatorAge": "20",
+  "testatorAddress": "zczsdc",
+  "religion": "czdcdsc",
+  "dob": "2005-05-30",
+  "place": "czcz",
+  "testatorSignature": "asfafasd",
+  "witnesses": [
+    {
+      "name": "aasdasas",
+      "address": "asfas",
+      "signature": "asfasd"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Time",
+      "value": "2026-03-21T22:49"
+    }
+  ],
+  "owner": "0xe73f36a707b1e89cec0a937ce4c86d3629df57b1",
+  "executor": "casdasd",
+  "executorEmail": "challasathwikreddy55@gmail.com",
+  "executorAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+  "beneficiaries": [
+    {
+      "name": "afasd",
+      "email": "23r21a6675@mlrit.ac.in",
+      "walletAddress": "0xbda5747bfd65f08deb54cb465eb87d40e51b197e ",
+      "share": 100
+    }
+  ],
+  "nominees": [],
+  "assets": [
+    {
+      "type": "Personal Property",
+      "description": "dasdd",
+      "value": "1000"
+    }
+  ]
+}

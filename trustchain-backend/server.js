@@ -42,6 +42,7 @@ const EMAIL_PORT = Number(process.env.EMAIL_PORT || 587);
 const EMAIL_USER = process.env.EMAIL_USER || '';
 const EMAIL_PASS = process.env.EMAIL_PASS || '';
 const EMAIL_FROM = process.env.EMAIL_FROM || (EMAIL_USER ? `TrustChain <${EMAIL_USER}>` : 'TrustChain <noreply@trustchain.io>');
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 const MAX_TIMER_DELAY_MS = 2147483647;
 const INDIA_TIME_ZONE = 'Asia/Kolkata';
 const SUPPORTED_WILL_CONDITIONS = new Set(['Time', 'Age', 'Death', 'Multiple']);
@@ -584,21 +585,29 @@ function isValidEmail(value) {
 function deriveReleaseTime(payload) {
   const effectiveConditions = flattenEffectiveConditions(payload?.conditions);
   const now = Math.floor(Date.now() / 1000);
+  const defaultDelay = now + WILL_DEFAULT_RELEASE_DELAY_SECONDS;
 
-  // Keep death-condition wills near-immediate, but add a safety buffer so createWill
-  // does not revert when block timestamp advances between request handling and mining.
+  // Gathering all candidates
+  const candidates = [];
+
+  // 1. Death Condition: uses a safety buffer baseline
   if (hasDeathCondition(effectiveConditions)) {
-    // Increased to 300s (5m) to be safe against clock skew on Sepolia
-    return now + 300;
+    candidates.push(now + 300);
   }
 
+  // 2. Direct ReleaseTime (Time-based condition)
   const direct = parsePositiveNumber(payload?.releaseTime);
-  if (direct) return Math.floor(direct);
+  if (direct) candidates.push(Math.floor(direct));
 
+  // 3. Age Condition
   const ageConditionReleaseTime = deriveAgeConditionReleaseTime(effectiveConditions);
-  if (ageConditionReleaseTime) return ageConditionReleaseTime;
+  if (ageConditionReleaseTime) candidates.push(ageConditionReleaseTime);
 
-  return now + WILL_DEFAULT_RELEASE_DELAY_SECONDS;
+  // If no specific conditions provided, use default delay
+  if (candidates.length === 0) return defaultDelay;
+
+  // For 'Multiple' or mixed conditions, we take the LATEST date (Logical AND)
+  return Math.max(...candidates);
 }
 
 function parseDobValue(rawDob) {
@@ -920,20 +929,27 @@ async function persistWillMetadataOnIpfs(payload) {
 }
 
 async function getDigitalWillSignerAndContract() {
-  if (!DIGITAL_WILL_CONTRACT_ADDRESS || !DIGITAL_WILL_OWNER_PRIVATE_KEY) {
-    throw new Error(
-      'Missing DIGITAL_WILL_CONTRACT_ADDRESS or DIGITAL_WILL_OWNER_PRIVATE_KEY in backend environment'
-    );
+  if (!DIGITAL_WILL_CONTRACT_ADDRESS) {
+    throw new Error('Missing DIGITAL_WILL_CONTRACT_ADDRESS in backend environment');
   }
 
   if (!ethers.isAddress(DIGITAL_WILL_CONTRACT_ADDRESS)) {
     throw new Error('DIGITAL_WILL_CONTRACT_ADDRESS is not a valid wallet/contract address');
   }
 
-  // Auto-detect network is more resilient than hardcoding chainId
   const provider = new ethers.JsonRpcProvider(BLOCKCHAIN_RPC_URL);
-  const wallet = new ethers.Wallet(DIGITAL_WILL_OWNER_PRIVATE_KEY, provider);
+  
+  // If no private key, return read-only mode
+  if (!DIGITAL_WILL_OWNER_PRIVATE_KEY) {
+    const code = await provider.getCode(DIGITAL_WILL_CONTRACT_ADDRESS);
+    if (!code || code === '0x') {
+      throw new Error(`No deployed contract found at ${DIGITAL_WILL_CONTRACT_ADDRESS}`);
+    }
+    const contract = new ethers.Contract(DIGITAL_WILL_CONTRACT_ADDRESS, DIGITAL_WILL_ABI, provider);
+    return { provider, wallet: null, contract, balance: 0n, readOnly: true };
+  }
 
+  const wallet = new ethers.Wallet(DIGITAL_WILL_OWNER_PRIVATE_KEY, provider);
   const [code, balance] = await Promise.all([
     provider.getCode(DIGITAL_WILL_CONTRACT_ADDRESS),
     provider.getBalance(wallet.address)
@@ -944,8 +960,7 @@ async function getDigitalWillSignerAndContract() {
   }
 
   const contract = new ethers.Contract(DIGITAL_WILL_CONTRACT_ADDRESS, DIGITAL_WILL_ABI, wallet);
-
-  return { provider, wallet, contract, balance };
+  return { provider, wallet, contract, balance, readOnly: false };
 }
 
 async function sendContractTx(contractCall, provider, fromAddress, nonceRef) {
@@ -1431,12 +1446,50 @@ async function sendExecutedWillEmailsWithAttachment(willMetadata, txHash) {
 
   await Promise.allSettled(uniqueRecipients.map(async (email) => {
     try {
+      const emailLower = email.toLowerCase().trim();
+      const beneficiaries = (willMetadata?.beneficiaries || []).map(b => String(b?.email || '').toLowerCase().trim());
+      const nominees = (willMetadata?.nominees || []).map(n => String(n?.email || '').toLowerCase().trim());
+      
+      const isEligibleReceiver = beneficiaries.includes(emailLower) || nominees.includes(emailLower);
+
+      const isReadOnlyRelease = txHash === "RELEASED (Pending on-chain claim)";
+      const showReleaseButton = isReadOnlyRelease && isEligibleReceiver;
+      const releaseUrl = `${FRONTEND_URL}/?view=release&willId=${encodeURIComponent(willId)}`;
+
+      const subject = isReadOnlyRelease 
+        ? `TrustChain: Digital Will Released (${willId})`
+        : `TrustChain: Digital Will Executed (${willId})`;
+
+      const bodyText = showReleaseButton
+        ? `The conditions for Digital Will (${willId}) have been met. The official document is now released. Please find it attached.\n\nTo receive your assets on-chain, please click this link (requires MetaMask): ${releaseUrl}`
+        : `The conditions for Digital Will (${willId}) have been met. The official document is now released. Please find it attached.\n\nNote: The final on-chain ETH distribution is now available for beneficiaries.`;
+
+      const releaseButtonHtml = showReleaseButton 
+        ? `<br/>
+           <div style="text-align: center; padding: 20px;">
+             <a href="${escapeHtml(releaseUrl)}" style="background: #48bb78; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px;">
+               Receive Assets to My Wallet
+             </a>
+           </div>
+           <p style="font-size: 12px; color: #718096; text-align: center;">Note: This link requires MetaMask to confirm the asset distribution on the blockchain.</p>`
+        : `<p><em>Note: The final on-chain ETH distribution is now available for beneficiaries to claim via their registered wallets.</em></p>`;
+
+      const bodyHtml = isReadOnlyRelease
+        ? `<h2>TrustChain: Digital Will Released</h2>
+           <p>The conditions for Digital Will (<strong>${escapeHtml(willId)}</strong>) have been fulfilled.</p>
+           <p>The official Digital Will document has been generated and is <strong>attached to this email</strong>.</p>
+           ${releaseButtonHtml}`
+        : `<h2>TrustChain: Digital Will Executed</h2>
+           <p>Digital Will execution completed successfully.</p>
+           <p>Please find the official <strong>TrustChain.pdf</strong> document attached to this email.</p>
+           <p>Will ID: <strong>${escapeHtml(willId)}</strong><br/>Blockchain TX: <strong>${escapeHtml(txHash || 'N/A')}</strong></p>`;
+
       await transporter.sendMail({
         from: EMAIL_FROM,
         to: email,
-        subject: `TrustChain: Digital Will Executed (${willId})`,
-        text: `Digital Will execution completed. Please find the attached TrustChain.pdf.\n\nWill ID: ${willId}\nBlockchain TX: ${txHash || 'N/A'}`,
-        html: `<p>Digital Will execution completed.</p><p>Please find the attached <strong>TrustChain.pdf</strong>.</p><p>Will ID: <strong>${escapeHtml(willId)}</strong><br/>Blockchain TX: <strong>${escapeHtml(txHash || 'N/A')}</strong></p>`,
+        subject,
+        text: bodyText,
+        html: bodyHtml,
         attachments: [
           {
             filename: 'TrustChain.pdf',
@@ -1455,61 +1508,91 @@ async function sendExecutedWillEmailsWithAttachment(willMetadata, txHash) {
   return { sent, failed, skipped };
 }
 
-async function sendWillCreatedEmail(willMetadata) {
+async function sendStakeholderCreationEmails(willMetadata, { uploadUrl = null, claimId = null } = {}) {
   const transporter = createEmailTransporter();
-  if (!transporter) return;
+  if (!transporter) return { sent: 0, failed: 0, skipped: 0 };
 
-  const executorEmail = isValidEmail(willMetadata.executorEmail) ? willMetadata.executorEmail.trim() : null;
-  if (!executorEmail) return;
+  const beneficiaries = (willMetadata.beneficiaries || []).map(b => b?.email).filter(isValidEmail).map(e => e.trim().toLowerCase());
+  const nominees = (willMetadata.nominees || []).map(n => n?.email).filter(isValidEmail).map(e => e.trim().toLowerCase());
+  const executor = isValidEmail(willMetadata.executorEmail) ? willMetadata.executorEmail.trim().toLowerCase() : null;
 
-  const html = `
-    <h2>TrustChain: You have been appointed as an Executor</h2>
-    <p>A new Digital Will has been created and you have been appointed as the Executor.</p>
-    <p>Will Name: <strong>${escapeHtml(willMetadata.name || 'Untitled Will')}</strong></p>
-    <p>Will ID: <strong>${escapeHtml(willMetadata.id || 'N/A')}</strong></p>
-    <p>Execution Condition: <strong>${escapeHtml(buildExecutionConditionForWill(willMetadata.conditions))}</strong></p>
-    <p>This will is currently stored on the blockchain and will execute automatically once the conditions are met.</p>
-    <br/>
-    <p>Thank you for using TrustChain.</p>
-  `;
+  const allRecipients = [...new Set([...beneficiaries, ...nominees, executor].filter(Boolean))];
+  if (!allRecipients.length) return { sent: 0, failed: 0, skipped: 0 };
 
-  await transporter.sendMail({
-    from: EMAIL_FROM,
-    to: executorEmail,
-    subject: `TrustChain: Executor Appointment for ${willMetadata.name || 'Digital Will'}`,
-    html
-  });
-  console.log(`[EMAIL] ✓ Executor appointment notification sent to: ${executorEmail}`);
-}
+  const willId = willMetadata.id || 'N/A';
+  const conditionSummary = buildExecutionConditionForWill(willMetadata.conditions);
+  const isDeathFlow = hasDeathCondition(willMetadata.conditions);
 
-async function sendDeathConditionCreatedEmails(willMetadata, uploadUrl, claimId) {
-  const transporter = createEmailTransporter();
-  if (!transporter) return;
+  let sent = 0;
+  let failed = 0;
 
-  const recipients = [
-    ...((willMetadata.beneficiaries || []).map((b) => b?.email).filter(Boolean)),
-    ...((willMetadata.nominees || []).map((n) => n?.email).filter(Boolean)),
-    isValidEmail(willMetadata.executorEmail) ? willMetadata.executorEmail : null
-  ].filter(Boolean);
+  await Promise.allSettled(allRecipients.map(async (email) => {
+    try {
+      const isEligibleReceiver = beneficiaries.includes(email) || nominees.includes(email);
+      const isExecutor = email === executor;
 
-  const uniqueRecipients = [...new Set(recipients)];
-  if (!uniqueRecipients.length) return;
+      const subject = isDeathFlow 
+        ? `TrustChain: Death-condition will created for ${willMetadata.name || 'Digital Will'}`
+        : `TrustChain: Digital Will created for ${willMetadata.name || 'Digital Will'}`;
 
-  const html = `
-    <h2>TrustChain Death-Condition Will Created</h2>
-    <p>Will ID: <strong>${escapeHtml(willMetadata.id || 'N/A')}</strong></p>
-    <p>A death-condition will has been created. To release this will, please upload a death certificate and submit for executor approval.</p>
-    <p>Claim ID: <strong>${escapeHtml(claimId)}</strong></p>
-    <p><a href="${escapeHtml(uploadUrl)}">Upload Death Certificate</a></p>
-    <p>Reply to this mail with death certificate if needed, or use the secure upload link above.</p>
-  `;
+      let bodyHtml = `
+        <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 12px; padding: 30px;">
+          <h2 style="color: #2f6fed; text-align: center;">TrustChain: Digital Will Notification</h2>
+          <p>A new Digital Will (<strong>${escapeHtml(willId)}</strong>) has been successfully registered on the blockchain.</p>
+          <p><strong>Your Role:</strong> ${isExecutor ? 'Executor' : (isEligibleReceiver ? 'Beneficiary' : 'Stakeholder')}</p>
+          <p>Execution Condition: <strong>${escapeHtml(conditionSummary)}</strong></p>
+      `;
 
-  await transporter.sendMail({
-    from: EMAIL_FROM,
-    to: uniqueRecipients.join(','),
-    subject: `TrustChain: Death-condition will created (${willMetadata.id || 'Will'})`,
-    html
-  });
+      if (isDeathFlow) {
+        if (isEligibleReceiver && uploadUrl) {
+          bodyHtml += `
+            <div style="padding: 24px; background: #f7fafc; border-radius: 10px; margin: 20px 0; border: 1px solid #e2e8f0;">
+              <p style="margin-top: 0;">As a Beneficiary/Nominee, you are authorized to initiate the asset release by uploading the required death certificate.</p>
+              <div style="text-align: center;">
+                <a href="${escapeHtml(uploadUrl)}" style="background: #2f6fed; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: bold;">
+                  Upload Death Certificate
+                </a>
+              </div>
+              <p style="font-size: 12px; color: #718096; margin-top: 15px; text-align: center;">Claim ID: ${escapeHtml(claimId || 'N/A')}</p>
+            </div>
+          `;
+        } else if (isExecutor) {
+          bodyHtml += `
+            <div style="padding: 24px; background: #fdf2f2; border-radius: 10px; margin: 20px 0;">
+              <p><strong>Note for Executor:</strong> A death-condition will has been created where you are appointed as the overseer. You will be notified automatically if a death certificate is uploaded for your approval.</p>
+            </div>
+          `;
+        }
+      } else {
+        bodyHtml += `
+          <div style="padding: 24px; background: #f0f7ff; border-radius: 10px; margin: 20px 0;">
+            <p>This will is currently active and securely stored on the blockchain. It will execute automatically (or become claimable) once the defined conditions (Age/Time) are met.</p>
+          </div>
+        `;
+      }
+
+      bodyHtml += `
+          <p style="margin-top: 30px;">Thank you for using TrustChain.</p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+          <p style="font-size: 11px; color: #999; text-align: center;">TrustChain: Secure, Automated, Decentralized Wills.</p>
+        </div>
+      `;
+
+      await transporter.sendMail({
+        from: EMAIL_FROM,
+        to: email,
+        subject,
+        html: bodyHtml
+      });
+      sent += 1;
+    } catch (err) {
+      failed += 1;
+      console.error(`[NOTIFY] Stakeholder notification failed for ${email}:`, err.message);
+    }
+  }));
+
+  console.log(`[NOTIFY] ✓ Stakeholder notifications sent for ${willId} (Total: ${sent})`);
+  return { sent, failed, skipped: 0 };
 }
 
 async function sendExecutorApprovalEmail(
@@ -1526,24 +1609,31 @@ async function sendExecutorApprovalEmail(
   if (!transporter || !executorEmail) return;
 
   const html = `
-    <h2>TrustChain Death Certificate Received</h2>
-    <p>Will ID: <strong>${escapeHtml(willMetadata.id || 'N/A')}</strong></p>
-    <p>Claim ID: <strong>${escapeHtml(claimId)}</strong></p>
-    <p>Claim Token: <strong>${escapeHtml(claimToken || 'N/A')}</strong></p>
-    <p>Certificate file: <strong>${escapeHtml(certificateFileName || 'Uploaded file')}</strong></p>
-    ${certificatePublicUrl ? `<p>View uploaded certificate: <a href="${escapeHtml(certificatePublicUrl)}">Open Certificate</a></p>` : ''}
-    <p>Please review and approve release:</p>
-    <p>
-      <a href="${escapeHtml(approveUrl)}" style="display:inline-block;padding:10px 16px;background:#1f7a36;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;">
-        Release Will
+    <h2>TrustChain Executor: Action Required</h2>
+    <p>A death certificate has been uploaded for <strong>Digital Will ${escapeHtml(willMetadata.id || 'N/A')}</strong>.</p>
+    <p>As the appointed Executor, please review the document below. If everything is in order, you can authorize the release of assets to the beneficiaries.</p>
+    
+    <div style="background: #f7fafc; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; margin: 20px 0;">
+      <p><strong>Claim Details:</strong></p>
+      <p>Will Name: ${escapeHtml(willMetadata.name || 'Untitled')}</p>
+      <p>Certificate: <strong>${escapeHtml(certificateFileName || 'Uploaded file')}</strong></p>
+      ${certificatePublicUrl ? `<p><a href="${escapeHtml(certificatePublicUrl)}" style="color: #2f6fed; font-weight: bold;">View Death Certificate</a></p>` : ''}
+    </div>
+
+    <div style="text-align: center; margin: 30px 0;">
+      <p>By clicking below, you verify the document and trigger the release of the Digital Will and its assets:</p>
+      <a href="${escapeHtml(approveUrl)}" style="display:inline-block;padding:14px 28px;background:#1f7a36;color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size: 16px;">
+        Approve & Release Assets
       </a>
-    </p>
+    </div>
+    
+    <p style="font-size: 13px; color: #718096;">Claim ID: ${escapeHtml(claimId)} | Secure Token: ${escapeHtml(claimToken || 'N/A')}</p>
   `;
 
   await transporter.sendMail({
     from: EMAIL_FROM,
     to: executorEmail,
-    subject: `TrustChain: Approval needed for will ${willMetadata.id || ''}`,
+    subject: `TrustChain: Action Required for Will ${willMetadata.id || ''}`,
     html,
     attachments: certificateFilePath
       ? [{ filename: certificateFileName || 'death-certificate', path: certificateFilePath }]
@@ -1557,6 +1647,49 @@ async function sendFinalWillDataEmails(willMetadata, txHash) {
 
 async function sendBeneficiaryNotificationEmails(willMetadata, txHash) {
   return sendExecutedWillEmailsWithAttachment(willMetadata, txHash);
+}
+
+async function sendReadyToClaimEmails(willMetadata) {
+  const transporter = createEmailTransporter();
+  const recipients = listExecutionRecipients(willMetadata);
+  const uniqueRecipients = recipients.valid;
+
+  if (!transporter || !uniqueRecipients.length) {
+    return { sent: 0, failed: 0, skipped: recipients.skipped + uniqueRecipients.length };
+  }
+
+  const willId = willMetadata?.id || 'Will';
+  console.log(`[EMAIL] Sending "Ready to Claim" alert for ${willId} to: ${uniqueRecipients.join(', ')}`);
+
+  const html = `
+    <h2>TrustChain: Digital Will Execution Conditions Met!</h2>
+    <p>Your Digital Will (<strong>${escapeHtml(willId)}</strong>) is now ready for execution.</p>
+    <p>The defined conditions have been verified on the blockchain. You can now visit the TrustChain portal to trigger the final inheritance distribution using your MetaMask wallet.</p>
+    <p>Will Name: <strong>${escapeHtml(willMetadata.name || 'Untitled Will')}</strong></p>
+    <p>Execution Trigger: <strong>${escapeHtml(buildConditionSummary(willMetadata.conditions))}</strong></p>
+    <br/>
+    <p>Connect your wallet to claim the distribution.</p>
+  `;
+
+  let sent = 0;
+  let failed = 0;
+
+  await Promise.allSettled(uniqueRecipients.map(async (email) => {
+    try {
+      await transporter.sendMail({
+        from: EMAIL_FROM,
+        to: email,
+        subject: `TrustChain: Will Ready for Execution (${willId})`,
+        html
+      });
+      sent += 1;
+    } catch (err) {
+      failed += 1;
+      console.error(`[EMAIL] Failed to send claim alert to ${email}:`, err.message);
+    }
+  }));
+
+  return { sent, failed, skipped: recipients.skipped };
 }
 
 function clearScheduledWillExecution(willId) {
@@ -1692,7 +1825,7 @@ async function getBlockchainStatus() {
 }
 
 async function executeWillAndNotify(willId, trigger = 'manual') {
-  const { provider, wallet, contract } = await getDigitalWillSignerAndContract();
+  const { provider, wallet, contract, readOnly } = await getDigitalWillSignerAndContract();
   let currentWillState;
   try {
     currentWillState = await getWillState(contract, willId);
@@ -1743,6 +1876,26 @@ async function executeWillAndNotify(willId, trigger = 'manual') {
     return { status: 'SKIPPED', reason: 'Release time not reached yet', will: currentWillState };
   }
 
+  // Transition logic: Try to execute if we have a key, otherwise release PDF (Read-Only)
+  if (readOnly) {
+    console.log(`[EXECUTE] Will ${willId} conditions met. Proactively releasing Digital Will PDF (Direct-to-Wallet Fallback).`);
+    let emailResult = { sent: 0, failed: 0, skipped: 0 };
+    if (willMetadata) {
+      try {
+        const releasePlaceholder = "RELEASED (Pending on-chain claim)";
+        if (hasDeathCondition(willMetadata?.conditions || [])) {
+          emailResult = await sendFinalWillDataEmails(willMetadata, releasePlaceholder);
+        } else {
+          emailResult = await sendBeneficiaryNotificationEmails(willMetadata, releasePlaceholder);
+        }
+      } catch (notifyErr) {
+        console.error('[EXECUTE] Read-only document release error:', notifyErr.message);
+      }
+    }
+    return { status: 'EXECUTED_READ_ONLY', reason: 'Document released. Direct-to-wallet distribution requires owner wallet funding.', emails: emailResult };
+  }
+
+  // If NOT read-only, proceed with full automated on-chain execution (Direct Send)
   const nonceRef = {
     value: await provider.getTransactionCount(wallet.address, 'pending')
   };
@@ -1773,7 +1926,7 @@ async function executeWillAndNotify(willId, trigger = 'manual') {
 
   console.log(`[EXECUTE] Sending executeWill transaction for ${willId} to Sepolia...`);
   const receipt = await sendContractTx(
-    (nonce) => contract.executeWill(willId, { nonce, gasLimit: 500000 }),
+    (nonce) => contract.executeWill(willId, { nonce, gasLimit: 200000 }),
     provider,
     wallet.address,
     nonceRef
@@ -2287,8 +2440,12 @@ app.post("/verify", upload.single("document"), async (req, res) => {
 // simple API key middleware (protects endpoints)
 app.use((req, res, next) => {
     // Skip API key check for public endpoints
-    const publicPaths = ['/health', '/verify', '/api/verification-records', '/api/blockchain-records', '/cid-records', '/favicon.ico'];
-  const isPublicPath = publicPaths.includes(req.path) || req.path.startsWith('/api/ipfs/') || req.path.startsWith('/death-claim/');
+    const publicPaths = ['/health', '/verify', '/api/verification-records', '/api/blockchain-records', '/cid-records', '/favicon.ico', '/create-will'];
+    const isPublicPath = 
+        publicPaths.includes(req.path) || 
+        req.path.startsWith('/api/ipfs/') || 
+        req.path.startsWith('/death-claim/') ||
+        req.path.startsWith('/will/');
     
     if (isPublicPath) {
       if (req.path === '/favicon.ico') {
@@ -2725,13 +2882,50 @@ app.post('/create-will', async (req, res) => {
       id: willId
     });
 
+    // If ipfsOnly is requested (MetaMask flow), return now.
+    // The email notification will be triggered by the frontend after the transaction completes.
+    if (payload.ipfsOnly) {
+      saveWillChainRecord({
+        type: 'DIGITAL_WILL',
+        timestamp: toIndiaIsoString(),
+        willId,
+        contractAddress: DIGITAL_WILL_CONTRACT_ADDRESS,
+        networkRpc: BLOCKCHAIN_RPC_URL,
+        ownerAddress: 'FRONTEND_METAMASK',
+        metadataCid: cid,
+        primaryTransactionHash: 'USER_MANUAL',
+        releaseTime,
+        executed: false,
+        funded: false,
+        revoked: false,
+        beneficiaryCount: beneficiaryData.addresses.length,
+        fundedAmountWei: '0'
+      });
+
+      return res.status(200).json({
+        status: 'SUCCESS',
+        message: 'Metadata uploaded. Proceed with MetaMask.',
+        cid,
+        metadataCid: cid,
+        willId,
+        releaseTime,
+        metadata
+      });
+    }
+
     const { provider, wallet, contract, balance } = await getDigitalWillSignerAndContract();
+
+    // LEGACY: Wait for contract execution (not used in current MetaMask workflow)
+    const deathConditionSelectedForWorkflow = hasDeathCondition(payload?.conditions);
+    const deathWorkflow = null;
+    // ... existing legacy code ...
     
     // Proactive balance check to prevent "could not coalesce" errors from failed gas estimation
     const autoFundAmountWei = deriveAutoFundAmountWei(payload);
     const minRequiredWei = autoFundAmountWei + ethers.parseEther('0.005'); // buffer for gas
     
-    if (balance < minRequiredWei) {
+    // Skip balance check if frontend is handling the transaction
+    if (!payload.ipfsOnly && balance < minRequiredWei) {
       return res.status(400).json({
         status: 'ERROR',
         message: `Insufficient testnet ETH balance. Needed at least ${ethers.formatEther(minRequiredWei)} ETH but only have ${ethers.formatEther(balance)} ETH.`
@@ -2745,7 +2939,7 @@ app.post('/create-will', async (req, res) => {
     const primaryBeneficiary = beneficiaryData.addresses[0];
 
     // Hardcode gasLimit for Sepolia to bypass estimation failures ("could not coalesce" source)
-    const gasLimit = 500000;
+    const gasLimit = 200000;
 
     const createReceipt = await sendContractTx(
       (nonce) => contract.createWill(willId, primaryBeneficiary, cid, releaseTime, { nonce, gasLimit }),
@@ -2813,42 +3007,7 @@ app.post('/create-will', async (req, res) => {
 
     saveWillChainRecord(chainRecord);
 
-    const deathConditionSelectedForWorkflow = hasDeathCondition(payload?.conditions);
-    let deathWorkflow = null;
-
-    if (deathConditionSelectedForWorkflow) {
-      const claim = createDeathClaimRecord({
-        willId,
-        metadataCid: cid,
-        executorEmail: executorEmail,
-        beneficiaries: payload?.beneficiaries,
-        nominees: payload?.nominees
-      });
-
-      const host = req.get('host') || `localhost:${PORT}`;
-      const protocol = req.get('x-forwarded-proto') || req.protocol || 'http';
-      const uploadUrl = `${protocol}://${host}/death-claim/upload?token=${claim.token}`;
-
-      try {
-        await sendDeathConditionCreatedEmails(metadata, uploadUrl, claim.claimId);
-      } catch (mailError) {
-        console.error('[DEATH] Initial death-condition email failed:', mailError.message);
-      }
-
-      deathWorkflow = {
-        enabled: true,
-        claimId: claim.claimId,
-        certificateUploadUrl: uploadUrl,
-        status: claim.status
-      };
-    } else {
-      try {
-        await sendWillCreatedEmail(metadata);
-      } catch (mailError) {
-        console.error('[EMAIL] Will created notification failed:', mailError.message);
-      }
-      scheduleWillExecution(willId, willState.releaseTime);
-    }
+    // Placeholder for legacy flow end
 
     const warnings = [];
     if (!EMAIL_USER || !EMAIL_PASS) {
@@ -3122,6 +3281,53 @@ app.post('/will/:willId/execute', async (req, res) => {
   }
 });
 
+app.post('/will/:willId/notify-creation', async (req, res) => {
+  try {
+    const willId = String(req.params.willId || '').trim();
+    if (!willId) return res.status(400).json({ status: 'ERROR', message: 'willId is required' });
+
+    // Find the record to get the metadata CID
+    const records = readJsonArraySafe(blockchainRecordsFile);
+    const record = records.find(r => r.willId === willId);
+    if (!record || !record.metadataCid) {
+      return res.status(404).json({ status: 'ERROR', message: 'Will metadata not found' });
+    }
+
+    const metadataBuffer = await ipfs.getFile(record.metadataCid);
+    const metadata = JSON.parse(metadataBuffer.toString('utf8'));
+
+    const isDeathFlow = hasDeathCondition(metadata?.conditions || []);
+    
+    if (isDeathFlow) {
+      const claim = createDeathClaimRecord({
+        willId,
+        metadataCid: record.metadataCid,
+        executorEmail: metadata.executorEmail,
+        beneficiaries: metadata.beneficiaries,
+        nominees: metadata.nominees
+      });
+
+      const host = req.get('host') || `localhost:${PORT}`;
+      const protocol = req.get('x-forwarded-proto') || req.protocol || 'http';
+      const uploadUrl = `${protocol}://${host}/death-claim/upload?token=${claim.token}`;
+
+      await sendStakeholderCreationEmails(metadata, { uploadUrl, claimId: claim.claimId });
+      console.log(`[NOTIFY] Stakeholder emails sent for death-will ${willId}`);
+      
+      return res.json({ status: 'SUCCESS', message: 'Emails sent successfully', deathWorkflow: true });
+    } else {
+      await sendStakeholderCreationEmails(metadata);
+      scheduleWillExecution(willId, Number(metadata.releaseTime || record.releaseTime || 0));
+      console.log(`[NOTIFY] Stakeholder emails sent for time/age-will ${willId}`);
+      
+      return res.json({ status: 'SUCCESS', message: 'Email sent successfully', scheduled: true });
+    }
+  } catch (err) {
+    console.error(`[NOTIFY] Error triggering notification for ${req.params.willId}:`, err.message);
+    res.status(500).json({ status: 'ERROR', message: err.message });
+  }
+});
+
 app.post('/will/:willId/revoke', async (req, res) => {
   try {
     const willId = String(req.params.willId || '').trim();
@@ -3131,7 +3337,14 @@ app.post('/will/:willId/revoke', async (req, res) => {
 
     clearScheduledWillExecution(willId);
 
-    const { provider, wallet, contract } = await getDigitalWillSignerAndContract();
+    const { provider, wallet, contract, readOnly } = await getDigitalWillSignerAndContract();
+    if (readOnly) {
+      return res.status(403).json({ 
+        status: 'ERROR', 
+        message: 'Backend is in Read-Only mode. Please revoke the will directly via MetaMask on the frontend.' 
+      });
+    }
+
     const nonceRef = {
       value: await provider.getTransactionCount(wallet.address, 'pending')
     };
@@ -3179,8 +3392,12 @@ const server = app.listen(PORT, async () => {
   
   let blockchainStatus = 'Ready';
   try {
-    const { wallet, balance } = await getDigitalWillSignerAndContract();
-    blockchainStatus = `Ready (Wallet: ${wallet.address}, Balance: ${ethers.formatEther(balance)} ETH)`;
+    const { wallet, balance, readOnly } = await getDigitalWillSignerAndContract();
+    if (readOnly) {
+      blockchainStatus = 'Ready (Read-Only Observer Mode)';
+    } else {
+      blockchainStatus = `Ready (Wallet: ${wallet.address}, Balance: ${ethers.formatEther(balance)} ETH)`;
+    }
   } catch (error) {
     blockchainStatus = `Error (${error.message})`;
   }

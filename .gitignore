@@ -46,3 +46,5 @@ __pycache__/
 *.pkl
 *.pyd
 .Python
+
+.vercel

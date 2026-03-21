@@ -7,6 +7,7 @@ import UploadDocument from "./pages/UploadDocument";
 import CreateWill from "./pages/CreateWill";
 import ViewDocuments from "./pages/ViewDocuments";
 import WalletConnect from "./pages/WalletConnect";
+import ReleaseWill from "./pages/ReleaseWill";
 import {
   getStoredWalletAddress,
   subscribeWalletEvents,
@@ -17,6 +18,16 @@ function App() {
   const [, setWalletAddress] = useState(() => getStoredWalletAddress());
 
   useEffect(() => {
+    // Handle query parameters for email links (e.g. ?view=release&willId=WILL-123)
+    const urlParams = new URLSearchParams(window.location.search);
+    const viewParam = urlParams.get('view');
+    const willIdParam = urlParams.get('willId');
+    
+    if (viewParam === 'release' && willIdParam) {
+      setView('release');
+      // We'll store willId in state if needed, or extract it in the renderView
+    }
+
     const unsubscribe = subscribeWalletEvents({
       onAccountChanged: (account) => {
         setWalletAddress(account || null);
@@ -53,6 +64,11 @@ function App() {
         return <ViewDocuments onNavigate={setView} />;
       case "view":
         return <ViewDocuments onNavigate={setView} />;
+      case "release": {
+        const urlParams = new URLSearchParams(window.location.search);
+        const willId = urlParams.get('willId');
+        return <ReleaseWill willId={willId} onNavigate={setView} />;
+      }
       default:
         return <LandingPage onNavigate={setView} />;
     }
