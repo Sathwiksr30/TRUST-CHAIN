@@ -1,0 +1,60 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-03-22T21:57:14+05:30",
+  "id": "WILL-1774196834279",
+  "name": "rakshitha",
+  "description": "Execute upon verified death",
+  "testatorName": "asasas",
+  "testatorGuardianName": "asdasds",
+  "testatorAge": "32",
+  "testatorAddress": "asfafaasfasdasdsasasa",
+  "religion": "aas",
+  "dob": "2005-05-30",
+  "place": "aasfas",
+  "testatorSignature": "asfasfa",
+  "witnesses": [
+    {
+      "name": "aasdasas",
+      "address": "hyd",
+      "signature": "asfasd"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Death",
+      "value": ""
+    }
+  ],
+  "owner": "0xe73f36a707b1e89cec0a937ce4c86d3629df57b1",
+  "executor": "fedqwdqw",
+  "executorEmail": "23r21a6675@mlrit.ac.in",
+  "beneficiaries": [
+    {
+      "name": "sai",
+      "email": "challasathwikreddy55@gmail.com",
+      "walletAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266 ",
+      "share": 100
+    }
+  ],
+  "nominees": [
+    {
+      "name": "adya",
+      "email": "23r21a66a7@mlrit.ac.in",
+      "relation": "siso",
+      "walletAddress": ""
+    }
+  ],
+  "assets": [
+    {
+      "type": "Digital Assets",
+      "description": "sss",
+      "value": "789451"
+    }
+  ]
+}

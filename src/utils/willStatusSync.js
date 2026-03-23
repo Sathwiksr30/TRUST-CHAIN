@@ -2,6 +2,7 @@ import axios from 'axios';
 import { toIndiaIsoString } from './timezone';
 
 const STORAGE_KEY = 'trustchain_documents';
+const API_KEY = (process.env.REACT_APP_API_KEY || 'trustchain_dummy_key').trim();
 
 function isWill(doc) {
   return String(doc?.type || '').toLowerCase() === 'will';
@@ -41,7 +42,7 @@ export async function syncWillStatuses(apiBase, currentUser) {
 
     try {
       const response = await axios.get(`${apiBase}/will/${encodeURIComponent(doc.id)}`, {
-        headers: { 'x-api-key': 'trustchain_dummy_key' }
+        headers: { 'x-api-key': API_KEY }
       });
 
       const willState = response.data?.will;

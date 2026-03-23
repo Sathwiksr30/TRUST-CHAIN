@@ -1,18 +1,19 @@
 import express from "express";
 import cors from "cors";
+import { Resend } from "resend";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
-import dotenv from "dotenv";
 import ipfs from "./ipfs.js";
 import mammoth from "mammoth";
 import axios from "axios";
 import { ethers } from "ethers";
-import { Resend } from "resend";
 
+
+import dotenv from "dotenv";
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -43,10 +44,11 @@ const EMAIL_PORT = Number(process.env.EMAIL_PORT || 587);
 const EMAIL_USER = process.env.EMAIL_USER || '';
 const EMAIL_PASS = process.env.EMAIL_PASS || '';
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
-const EMAIL_FROM = process.env.EMAIL_FROM || 'TrustChain <onboarding@resend.dev>';
+const EMAIL_FROM = process.env.EMAIL_FROM || 'TrustChain <noreply@trustchain.shop>';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 const resendClient = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
+let smtpTransporter = null;
 const MAX_TIMER_DELAY_MS = 2147483647;
 const INDIA_TIME_ZONE = 'Asia/Kolkata';
 const SUPPORTED_WILL_CONDITIONS = new Set(['Time', 'Age', 'Death', 'Multiple']);
@@ -384,7 +386,7 @@ function saveCIDRecord(fileName, cid, documentId, score) {
     // Save back to file with pretty formatting
     writeJsonArraySafe(cidStorageFile, records);
     console.log(`[CID STORAGE] ✓ Record saved: ${fileName} → ${cid}`);
-    
+
     return true;
   } catch (error) {
     console.error('[CID STORAGE] ✗ Failed to save record:', error.message);
@@ -435,7 +437,7 @@ async function extractTextFromPdf(filePath) {
 // Main extraction function
 async function extractDocumentText(filePath, filename) {
   const ext = filename.toLowerCase();
-  
+
   if (ext.endsWith('.pdf')) {
     return await extractTextFromPdf(filePath);
   } else if (ext.endsWith('.docx')) {
@@ -465,10 +467,10 @@ function generateSHA256(filePath) {
 function storeOnBlockchain(documentData) {
   try {
     const records = readJsonArraySafe(blockchainRecordsFile);
-    
+
     const txHash = '0x' + crypto.randomBytes(32).toString('hex');
     const blockNumber = Math.floor(Math.random() * 1000000) + 1000000;
-    
+
     const blockchainRecord = {
       transactionHash: txHash,
       blockNumber,
@@ -481,12 +483,12 @@ function storeOnBlockchain(documentData) {
       gasUsed: '21000',
       status: 'confirmed'
     };
-    
+
     records.push(blockchainRecord);
     writeJsonArraySafe(blockchainRecordsFile, records);
-    
+
     console.log(`[BLOCKCHAIN] ✓ Stored: ${documentData.documentId} | TX: ${txHash}`);
-    
+
     return {
       success: true,
       transactionHash: txHash,
@@ -594,9 +596,9 @@ function deriveReleaseTime(payload) {
   // Gathering all candidates
   const candidates = [];
 
-  // 1. Death Condition: uses a safety buffer baseline
+  // 1. Death Condition: uses a minimal safety buffer baseline
   if (hasDeathCondition(effectiveConditions)) {
-    candidates.push(now + 300);
+    candidates.push(now + 5);
   }
 
   // 2. Direct ReleaseTime (Time-based condition)
@@ -920,7 +922,6 @@ async function persistWillMetadataOnIpfs(payload) {
     owner: payload.owner,
     executor: payload.executor,
     executorEmail: payload.executorEmail,
-    executorAddress: String(payload.executorAddress || payload.executorWalletAddress || '').trim(),
     beneficiaries: payload.beneficiaries || [],
     nominees: payload.nominees || [],
     assets: payload.assets || []
@@ -942,7 +943,7 @@ async function getDigitalWillSignerAndContract() {
   }
 
   const provider = new ethers.JsonRpcProvider(BLOCKCHAIN_RPC_URL);
-  
+
   // If no private key, return read-only mode
   if (!DIGITAL_WILL_OWNER_PRIVATE_KEY) {
     const code = await provider.getCode(DIGITAL_WILL_CONTRACT_ADDRESS);
@@ -994,9 +995,11 @@ async function sendContractTx(contractCall, provider, fromAddress, nonceRef) {
 }
 
 function saveWillChainRecord(record) {
+  console.log(`[STORAGE] Saving record for will ${record.willId} to ${blockchainRecordsFile}`);
   const records = readJsonArraySafe(blockchainRecordsFile);
   records.push(record);
   writeJsonArraySafe(blockchainRecordsFile, records);
+  console.log(`[STORAGE] ✓ Record saved. Total records: ${records.length}`);
 }
 
 function disableWillScheduleInRecords(willId, reason) {
@@ -1027,30 +1030,134 @@ function disableWillScheduleInRecords(willId, reason) {
 // ==========================================
 
 function createEmailTransporter() {
-  // Legacy function for Nodemailer, no longer used.
+  if (resendClient) {
+    return { provider: 'resend' };
+  }
+
+  if (EMAIL_USER && EMAIL_PASS) {
+    return { provider: 'smtp' };
+  }
+
   return null;
 }
 
-async function sendEmailViaResend({ to, subject, html, text, attachments = [] }) {
-  if (!resendClient) {
-    console.warn("[RESEND] API Key missing. Skipping email.");
-    return { error: 'RESEND_API_KEY_MISSING' };
+function getSmtpTransporter() {
+  if (!EMAIL_USER || !EMAIL_PASS) {
+    return null;
   }
 
-  try {
-    const response = await resendClient.emails.send({
+  if (smtpTransporter) {
+    return smtpTransporter;
+  }
+
+  smtpTransporter = nodemailer.createTransport({
+    host: EMAIL_HOST,
+    port: EMAIL_PORT,
+    secure: EMAIL_PORT === 465,
+    auth: {
+      user: EMAIL_USER,
+      pass: EMAIL_PASS
+    }
+  });
+
+  return smtpTransporter;
+}
+
+function normalizeSmtpAttachments(attachments) {
+  if (!Array.isArray(attachments) || attachments.length === 0) return [];
+
+  return attachments
+    .map((attachment) => {
+      if (!attachment) return null;
+
+      if (attachment.path) {
+        return {
+          filename: attachment.filename,
+          path: attachment.path
+        };
+      }
+
+      if (attachment.content !== undefined) {
+        return {
+          filename: attachment.filename,
+          content: attachment.content
+        };
+      }
+
+      return null;
+    })
+    .filter(Boolean);
+}
+
+async function sendEmailViaResend({ to, subject, html, text, attachments = [] }) {
+  console.log(`[EMAIL] Attempting to send to: ${to} | Subject: ${subject}`);
+  let resendError = null;
+
+  const apiKey = process.env.RESEND_API_KEY;
+  if (apiKey) {
+    try {
+      const resend = new Resend(apiKey);
+      console.log(`[RESEND] Using SDK to send...`);
+      const normalizedAttachments = await Promise.all(attachments.map(async (att) => {
+        if (att.content && Buffer.isBuffer(att.content)) {
+          return {
+            filename: att.filename,
+            content: att.content.toString('base64'),
+          };
+        }
+        return att;
+      }));
+
+      const response = await resend.emails.send({
+        from: EMAIL_FROM,
+        to,
+        subject,
+        html,
+        text,
+        attachments: normalizedAttachments
+      });
+
+      if (response?.error) {
+        console.error(`[RESEND] API Error:`, response.error);
+        throw new Error(response.error.message || 'Unknown Resend API error');
+      }
+
+      console.log(`[RESEND] ✓ Success. ID: ${response?.data?.id}`);
+      return {
+        provider: 'resend',
+        response
+      };
+    } catch (err) {
+      resendError = err;
+      console.error(`[RESEND] ✗ Failed to send to ${to}:`, err.message);
+      console.warn('[EMAIL] Falling back to SMTP if configured...');
+    }
+  }
+
+  const smtp = getSmtpTransporter();
+  if (smtp) {
+    console.log(`[SMTP] Attempting delivery...`);
+    const smtpResponse = await smtp.sendMail({
       from: EMAIL_FROM,
       to,
       subject,
       html,
       text,
-      attachments
+      attachments: normalizeSmtpAttachments(attachments)
     });
-    return response;
-  } catch (err) {
-    console.error(`[RESEND] Failed to send to ${to}:`, err.message);
-    throw err;
+
+    console.log(`[SMTP] ✓ Success. MessageID: ${smtpResponse.messageId}`);
+    return {
+      provider: 'smtp',
+      response: smtpResponse
+    };
   }
+
+  if (resendError) {
+    throw new Error(`Email delivery failed via Resend and SMTP is not configured. Root error: ${resendError.message}`);
+  }
+
+  throw new Error('No email provider configured. Set RESEND_API_KEY or SMTP credentials (EMAIL_USER/EMAIL_PASS).');
 }
 
 function buildConditionSummary(conditions) {
@@ -1059,7 +1166,7 @@ function buildConditionSummary(conditions) {
   return effectiveConditions
     .filter(c => c.type)
     .map(c => {
-      if (c.type === 'Time')       return `Time-based (after ${c.value})`;
+      if (c.type === 'Time') return `Time-based (after ${c.value})`;
       if (c.type === 'Age') {
         const dob = c?.dob || c?.value?.dob || 'N/A';
         const targetAge = c?.targetAge || c?.value?.targetAge || c?.value || 'N/A';
@@ -1067,7 +1174,7 @@ function buildConditionSummary(conditions) {
         const when = releaseTime ? toIndiaDisplayString(new Date(releaseTime * 1000)) : 'computed date unavailable';
         return `Age-based (DOB ${dob}, at age ${targetAge}, on ${when})`;
       }
-      if (c.type === 'Death')      return 'Death verification';
+      if (c.type === 'Death') return 'Death verification';
       return c.type;
     })
     .join(', ');
@@ -1320,9 +1427,21 @@ async function generateTrustChainPdfBuffer(willMetadata, txHash) {
     doc.font('Times-Bold').fontSize(17).text('DIGITAL WILL', { align: 'center', lineGap });
     doc.moveDown(0.45);
 
-    para(
-      `I, Shri/Smt ${valueOrBlank(willMetadata?.testatorName, { preventWalletAsName: true })}, son/daughter/wife of Shri ${valueOrBlank(willMetadata?.testatorGuardianName || willMetadata?.guardianName)}, aged ${valueOrBlank(willMetadata?.testatorAge || willMetadata?.age)} years, resident of ${valueOrBlank(willMetadata?.testatorAddress || willMetadata?.address)}, by religion ${valueOrBlank(willMetadata?.religion)}, born on ${valueOrBlank(willMetadata?.dob || willMetadata?.dateOfBirth)}, do hereby revoke all my previous Wills and Codicils and declare this to be my last Will and Testament made on this ${createdDate.day} day of ${createdDate.month}, ${createdDate.year}.`
-    );
+    richPara([
+      { text: 'I, Shri/Smt ' },
+      { text: valueOrBlank(willMetadata?.testatorName, { preventWalletAsName: true }), bold: true, underline: true },
+      { text: ', son/daughter/wife of Shri ' },
+      { text: valueOrBlank(willMetadata?.testatorGuardianName || willMetadata?.guardianName), bold: true, underline: true },
+      { text: ', aged ' },
+      { text: valueOrBlank(willMetadata?.testatorAge || willMetadata?.age), bold: true, underline: true },
+      { text: ' years, resident of ' },
+      { text: valueOrBlank(willMetadata?.testatorAddress || willMetadata?.address), bold: true, underline: true },
+      { text: ', by religion ' },
+      { text: valueOrBlank(willMetadata?.religion), bold: true, underline: true },
+      { text: ', born on ' },
+      { text: valueOrBlank(willMetadata?.dob || willMetadata?.dateOfBirth), bold: true, underline: true },
+      { text: `, do hereby revoke all my previous Wills and Codicils and declare this to be my last Will and Testament made on this ${createdDate.day} day of ${createdDate.month}, ${createdDate.year}.` }
+    ]);
     para('I declare that I am in sound mind and good health and that this Will is made by me of my own free will and volition, without any coercion, undue influence, or pressure from any person.');
 
     section('1. WILL DETAILS');
@@ -1331,10 +1450,13 @@ async function generateTrustChainPdfBuffer(willMetadata, txHash) {
     para('(Time-Based / Age-Based / Death Verification / Multiple Conditions)');
 
     section('2. APPOINTMENT OF EXECUTOR');
-    para(
-      `I hereby appoint Shri/Smt ${valueOrBlank(willMetadata?.executor, { preventWalletAsName: true })} (Email: ${valueOrBlank(willMetadata?.executorEmail)}), as the Executor of this Will, who shall be responsible for managing and distributing my assets as per my instructions.`
-    );
-    field('Blockchain Wallet Address of Executor', willMetadata?.executorAddress || willMetadata?.executorWalletAddress);
+    richPara([
+      { text: 'I hereby appoint Shri/Smt ' },
+      { text: valueOrBlank(willMetadata?.executor, { preventWalletAsName: true }), bold: true, underline: true },
+      { text: ' (Email: ' },
+      { text: valueOrBlank(willMetadata?.executorEmail), bold: true, underline: true },
+      { text: '), as the Executor of this Will, who shall be responsible for managing and distributing my assets as per my instructions.' }
+    ]);
     para('In case the above executor is unable or unwilling to act, an alternate executor may be appointed as per legal provisions.');
 
     section('3. BENEFICIARIES');
@@ -1396,7 +1518,10 @@ async function generateTrustChainPdfBuffer(willMetadata, txHash) {
           conditionValue = 'Verified death certificate approval';
         }
 
-        para(`- Condition ${i + 1}: ${conditionType} - ${conditionValue}`);
+        richPara([
+          { text: `- Condition ${i + 1}: ` },
+          { text: `${conditionType} - ${conditionValue}`, bold: true, underline: true }
+        ]);
       });
     }
     para('(Example: Upon death verification / On a specific date / When beneficiary reaches a certain age / Multiple conditions)');
@@ -1408,7 +1533,17 @@ async function generateTrustChainPdfBuffer(willMetadata, txHash) {
     para('I authorize the Executor to access and manage my digital and financial assets, including blockchain-based assets, using the credentials and permissions provided securely.');
 
     section('9. SIGNATURE');
-    para(`IN WITNESS WHEREOF, I have hereunto set my hand on this ${executionDate.day} day of ${executionDate.month}, ${executionDate.year} at ${place}.`);
+    richPara([
+      { text: 'IN WITNESS WHEREOF, I have hereunto set my hand on this ' },
+      { text: String(executionDate.day), bold: true, underline: true },
+      { text: ' day of ' },
+      { text: String(executionDate.month), bold: true, underline: true },
+      { text: ', ' },
+      { text: String(executionDate.year), bold: true, underline: true },
+      { text: ' at ' },
+      { text: String(place), bold: true, underline: true },
+      { text: '.' }
+    ]);
     field('Signature of Testator', willMetadata?.testatorSignature, 0);
 
     section('10. WITNESSES');
@@ -1442,24 +1577,20 @@ async function generateTrustChainPdfBuffer(willMetadata, txHash) {
 }
 
 async function sendExecutedWillEmailsWithAttachment(willMetadata, txHash) {
-  const transporter = createEmailTransporter();
   const recipients = listExecutionRecipients(willMetadata);
   const uniqueRecipients = recipients.valid;
   const skipped = recipients.skipped;
 
-  if (!transporter) {
-    const reason = 'SMTP not configured. Set EMAIL_USER and EMAIL_PASS for real email delivery.';
-    console.warn(`[EMAIL] ${reason}`);
-    return { sent: 0, failed: 0, skipped: skipped + uniqueRecipients.length, error: reason };
-  }
-
   if (!uniqueRecipients.length) {
-    console.warn('[EMAIL] No valid recipients found for executed will email.');
+    console.warn('[RESEND] No valid recipients found for executed will email.');
     return { sent: 0, failed: 0, skipped };
   }
 
   console.log(`[RESEND] Sending executed will PDF to: ${uniqueRecipients.join(', ')}`);
   const pdfBuffer = await generateTrustChainPdfBuffer(willMetadata, txHash);
+  if (!pdfBuffer || pdfBuffer.length === 0) {
+    throw new Error(`[RESEND] PDF Generation failed for will ${willMetadata?.id}`);
+  }
   const willId = willMetadata?.id || 'Will';
 
   let sent = 0;
@@ -1470,14 +1601,14 @@ async function sendExecutedWillEmailsWithAttachment(willMetadata, txHash) {
       const emailLower = email.toLowerCase().trim();
       const beneficiaries = (willMetadata?.beneficiaries || []).map(b => String(b?.email || '').toLowerCase().trim());
       const nominees = (willMetadata?.nominees || []).map(n => String(n?.email || '').toLowerCase().trim());
-      
+
       const isEligibleReceiver = beneficiaries.includes(emailLower) || nominees.includes(emailLower);
 
       const isReadOnlyRelease = txHash === "RELEASED (Pending on-chain claim)";
       const showReleaseButton = isReadOnlyRelease && isEligibleReceiver;
       const releaseUrl = `${FRONTEND_URL}/?view=release&willId=${encodeURIComponent(willId)}`;
 
-      const subject = isReadOnlyRelease 
+      const subject = isReadOnlyRelease
         ? `TrustChain: Digital Will Released (${willId})`
         : `TrustChain: Digital Will Executed (${willId})`;
 
@@ -1485,7 +1616,7 @@ async function sendExecutedWillEmailsWithAttachment(willMetadata, txHash) {
         ? `The conditions for Digital Will (${willId}) have been met. The official document is now released. Please find it attached.\n\nTo receive your assets on-chain, please click this link (requires MetaMask): ${releaseUrl}`
         : `The conditions for Digital Will (${willId}) have been met. The official document is now released. Please find it attached.\n\nNote: The final on-chain ETH distribution is now available for beneficiaries.`;
 
-      const releaseButtonHtml = showReleaseButton 
+      const releaseButtonHtml = showReleaseButton
         ? `<br/>
            <div style="text-align: center; padding: 20px;">
              <a href="${escapeHtml(releaseUrl)}" style="background: #48bb78; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px;">
@@ -1529,7 +1660,10 @@ async function sendExecutedWillEmailsWithAttachment(willMetadata, txHash) {
 
 async function sendStakeholderCreationEmails(willMetadata, { uploadUrl = null, claimId = null } = {}) {
   const transporter = createEmailTransporter();
-  if (!transporter) return { sent: 0, failed: 0, skipped: 0 };
+  if (!transporter) {
+    console.error('[EMAIL] No provider configured for stakeholder notifications.');
+    return { sent: 0, failed: 1, skipped: 0, reason: 'No email provider configured' };
+  }
 
   const beneficiaries = (willMetadata.beneficiaries || []).map(b => b?.email).filter(isValidEmail).map(e => e.trim().toLowerCase());
   const nominees = (willMetadata.nominees || []).map(n => n?.email).filter(isValidEmail).map(e => e.trim().toLowerCase());
@@ -1550,7 +1684,7 @@ async function sendStakeholderCreationEmails(willMetadata, { uploadUrl = null, c
       const isEligibleReceiver = beneficiaries.includes(email) || nominees.includes(email);
       const isExecutor = email === executor;
 
-      const subject = isDeathFlow 
+      const subject = isDeathFlow
         ? `TrustChain: Death-condition will created for ${willMetadata.name || 'Digital Will'}`
         : `TrustChain: Digital Will created for ${willMetadata.name || 'Digital Will'}`;
 
@@ -1622,9 +1756,10 @@ async function sendExecutorApprovalEmail(
   certificateFilePath,
   certificatePublicUrl
 ) {
-  const transporter = createEmailTransporter();
   const executorEmail = isValidEmail(willMetadata?.executorEmail) ? willMetadata.executorEmail.trim() : '';
-  if (!transporter || !executorEmail) return;
+  if (!executorEmail) {
+    return { sent: false, reason: 'missing executor email' };
+  }
 
   const html = `
     <h2>TrustChain Executor: Action Required</h2>
@@ -1648,16 +1783,47 @@ async function sendExecutorApprovalEmail(
     <p style="font-size: 13px; color: #718096;">Claim ID: ${escapeHtml(claimId)} | Secure Token: ${escapeHtml(claimToken || 'N/A')}</p>
   `;
 
-  await sendEmailViaResend({
-    to: executorEmail,
-    subject: `TrustChain Executor: Action Required for Will Approval`,
-    html,
-    attachments: certificateFilePath
-      ? [{ filename: certificateFileName, path: certificateFilePath }]
-      : []
-  });
+  const subject = `TrustChain Executor: Action Required for Will Approval`;
+  const attachmentList = [];
 
-  console.log(`[RESEND] ✓ Executor approval request sent to: ${executorEmail}`);
+  if (certificateFilePath && fs.existsSync(certificateFilePath)) {
+    try {
+      const certificateBuffer = fs.readFileSync(certificateFilePath);
+      if (certificateBuffer?.length) {
+        attachmentList.push({
+          filename: certificateFileName || 'death-certificate',
+          content: certificateBuffer
+        });
+      }
+    } catch (attachmentErr) {
+      console.warn('[EMAIL] Could not read certificate attachment, sending approval email without attachment:', attachmentErr.message);
+    }
+  }
+
+  try {
+    const result = await sendEmailViaResend({
+      to: executorEmail,
+      subject,
+      html,
+      attachments: attachmentList
+    });
+    console.log(`[RESEND] ✓ Executor approval request sent to: ${executorEmail}`);
+    return { sent: true, to: executorEmail, ...result };
+  } catch (primaryErr) {
+    console.warn('[EMAIL] Approval email with attachment failed, retrying without attachment:', primaryErr.message);
+    try {
+      const retryResult = await sendEmailViaResend({
+        to: executorEmail,
+        subject,
+        html
+      });
+      console.log(`[RESEND] ✓ Executor approval request sent (RETRY) to: ${executorEmail}`);
+      return { sent: true, to: executorEmail, ...retryResult, retried: true };
+    } catch (retryErr) {
+      console.error('[EMAIL] Executor approval retry failed:', retryErr.message);
+      throw retryErr;
+    }
+  }
 }
 
 async function sendFinalWillDataEmails(willMetadata, txHash) {
@@ -1669,16 +1835,15 @@ async function sendBeneficiaryNotificationEmails(willMetadata, txHash) {
 }
 
 async function sendReadyToClaimEmails(willMetadata) {
-  const transporter = createEmailTransporter();
   const recipients = listExecutionRecipients(willMetadata);
   const uniqueRecipients = recipients.valid;
 
-  if (!transporter || !uniqueRecipients.length) {
-    return { sent: 0, failed: 0, skipped: recipients.skipped + uniqueRecipients.length };
+  if (!uniqueRecipients.length) {
+    return { sent: 0, failed: 0, skipped: recipients.skipped };
   }
 
   const willId = willMetadata?.id || 'Will';
-  console.log(`[EMAIL] Sending "Ready to Claim" alert for ${willId} to: ${uniqueRecipients.join(', ')}`);
+  console.log(`[RESEND] Sending "Ready to Claim" alert for ${willId} to: ${uniqueRecipients.join(', ')}`);
 
   const html = `
     <h2>TrustChain: Digital Will Execution Conditions Met!</h2>
@@ -1918,13 +2083,22 @@ async function executeWillAndNotify(willId, trigger = 'manual') {
     value: await provider.getTransactionCount(wallet.address, 'pending')
   };
 
+  const MAX_AUTO_TOPUP_WEI = ethers.parseEther('0.001');
   const minimumExecutionFundWei = deriveMinimumExecutionFundWei();
   let autoTopUpTxHash = null;
   let autoTopUpAmountWei = 0n;
 
   let fundedAmountWei = BigInt(currentWillState.fundedAmountWei || '0');
   if (minimumExecutionFundWei > 0n && fundedAmountWei < minimumExecutionFundWei) {
-    const deficitWei = minimumExecutionFundWei - fundedAmountWei;
+    let deficitWei = minimumExecutionFundWei - fundedAmountWei;
+
+    // Safety Limit: Prevent draining the backend wallet
+    if (deficitWei > MAX_AUTO_TOPUP_WEI) {
+      console.warn(`[EXECUTE] Will ${willId} deficit (${ethers.formatEther(deficitWei)} ETH) exceeds auto-topup limit. Cap to 0.001 ETH.`);
+      deficitWei = MAX_AUTO_TOPUP_WEI;
+    }
+
+    console.log(`[EXECUTE] Auto-topping up will ${willId} with ${ethers.formatEther(deficitWei)} ETH...`);
     const topUpReceipt = await sendContractTx(
       (nonce) => contract.fundWill(willId, { value: deficitWei, nonce }),
       provider,
@@ -1934,7 +2108,12 @@ async function executeWillAndNotify(willId, trigger = 'manual') {
 
     autoTopUpTxHash = topUpReceipt.hash;
     autoTopUpAmountWei = deficitWei;
+
+    // Hard re-fetch to ensure we have latest state before the final executeWill call
     currentWillState = await getWillState(contract, willId);
+    if (currentWillState.executed) {
+      return { status: 'SKIPPED', reason: 'Will was executed during top-up process', will: currentWillState };
+    }
     fundedAmountWei = BigInt(currentWillState.fundedAmountWei || '0');
   }
 
@@ -2040,26 +2219,26 @@ function normalizeText(text) {
 function verifyDocument(uploadedText) {
   // Read certificate dataset
   const datasetPath = path.join(__dirname, 'certificate_dataset.csv');
-  
+
   if (!fs.existsSync(datasetPath)) {
     return { isValid: false, score: 0, error: 'Dataset not found' };
   }
 
   const csvContent = fs.readFileSync(datasetPath, 'utf-8');
   const lines = csvContent.split('\n').slice(1); // Skip header
-  
+
   // Parse CSV and filter real certificates (label = 1)
   const realCertificates = [];
   for (const line of lines) {
     if (!line.trim()) continue;
-    
+
     // Split by comma, but handle commas in the document text
     const parts = line.split(',');
     if (parts.length >= 4) {
       const label = parseInt(parts[parts.length - 1].trim());
       const date = parts[parts.length - 2].trim();
       const id = parts[parts.length - 3].trim();
-      
+
       if (label === 1 && id && date) {
         realCertificates.push({ id, date });
       }
@@ -2085,7 +2264,7 @@ function verifyDocument(uploadedText) {
 
   // Check if ID exists in real certificates
   const idRows = realCertificates.filter(cert => cert.id === extractedId);
-  
+
   if (idRows.length === 0) {
     return { isValid: false, score: 30 };
   }
@@ -2109,7 +2288,7 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadsDir),
   filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
-const upload = multer({ 
+const upload = multer({
   storage,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
   fileFilter: (req, file, cb) => {
@@ -2154,7 +2333,7 @@ app.post("/verify", upload.single("document"), async (req, res) => {
   const startTime = Date.now();
   let file = null;
   let result = null;
-  
+
   try {
     if (!req.file) {
       console.error("No file received in /verify request");
@@ -2180,7 +2359,7 @@ app.post("/verify", upload.single("document"), async (req, res) => {
     // Generate document ID and timestamp
     const documentId = `DOC-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
     const timestamp = toIndiaIsoString();
-    
+
     result = {
       documentId,
       fileName,
@@ -2194,7 +2373,7 @@ app.post("/verify", upload.single("document"), async (req, res) => {
     // ===========================================
     // STEP 1: EXTRACT DOCUMENT TEXT
     // ===========================================
-    
+
     console.log("\n[STEP 1/7] 📖 Extracting document text...");
     result.flow.push({ step: 1, name: "Extract Document Text", status: "processing" });
 
@@ -2214,7 +2393,7 @@ app.post("/verify", upload.single("document"), async (req, res) => {
     // ===========================================
     // STEP 2: SEND TO ML MODEL
     // ===========================================
-    
+
     console.log("\n[STEP 2/7] 🚀 Sending to ML service...");
     result.flow.push({ step: 2, name: "Send to ML Model", status: "processing" });
 
@@ -2224,7 +2403,7 @@ app.post("/verify", upload.single("document"), async (req, res) => {
       const formData = new FormData();
       formData.append('document', fs.createReadStream(filePath), fileName);
       formData.append('text', extractedText);
-      
+
       // Call ML service
       mlResponse = await axios.post(
         `${ML_SERVICE_URL}/verify-document`,
@@ -2236,7 +2415,7 @@ app.post("/verify", upload.single("document"), async (req, res) => {
           maxContentLength: Infinity
         }
       );
-      
+
       result.flow[1].status = "completed";
       console.log(`✓ ML service responded`);
     } catch (error) {
@@ -2260,43 +2439,43 @@ app.post("/verify", upload.single("document"), async (req, res) => {
     // ===========================================
     // STEP 3: ML CLASSIFICATION
     // ===========================================
-    
+
     console.log("\n[STEP 3/7] 🤖 ML Classification...");
     result.flow.push({ step: 3, name: "ML Classification", status: "processing" });
 
     const verification = mlResponse.data.verification;
     const isReal = verification.isReal === true;
     const confidence = verification.confidence;
-    
+
     result.flow[2].status = "completed";
     result.flow[2].classification = verification.classification;
     result.flow[2].confidence = confidence;
     result.verification = verification;
-    
+
     console.log(`✓ Classification: ${verification.classification}`);
     console.log(`  Confidence: ${confidence}`);
 
     // ===========================================
     // IF FAKE - REJECT DOCUMENT
     // ===========================================
-    
+
     if (!isReal) {
       console.log("\n[STEP 4/7] ❌ Document REJECTED");
-      
+
       result.flow.push({
         step: 4,
         name: "Document Rejected",
         status: "rejected",
         reason: "Failed ML authenticity verification"
       });
-      
+
       result.status = "REJECTED";
       result.message = "Document failed authenticity verification";
       result.processingTime = `${Date.now() - startTime}ms`;
-      
+
       fs.unlinkSync(filePath);
       saveVerificationRecord(result);
-      
+
       console.log("=".repeat(60) + "\n");
       return res.status(200).json(result);
     }
@@ -2304,14 +2483,14 @@ app.post("/verify", upload.single("document"), async (req, res) => {
     // ===========================================
     // DOCUMENT IS REAL - CONTINUE PROCESSING
     // ===========================================
-    
+
     console.log("\n[STEP 4/7] ✅ Document VERIFIED (Real)");
     result.flow.push({ step: 4, name: "Document Verified as Real", status: "completed" });
 
     // ===========================================
     // STEP 5: GENERATE SHA-256 HASH
     // ===========================================
-    
+
     console.log("\n[STEP 5/7] 🔐 Generating SHA-256 hash...");
     result.flow.push({ step: 5, name: "Generate SHA-256 Hash", status: "processing" });
 
@@ -2331,17 +2510,17 @@ app.post("/verify", upload.single("document"), async (req, res) => {
     // ===========================================
     // STEP 6: UPLOAD TO IPFS
     // ===========================================
-    
+
     console.log("\n[STEP 6/7] 📦 Uploading to IPFS...");
     result.flow.push({ step: 6, name: "Upload to IPFS", status: "processing" });
 
     let ipfsCID = null;
     try {
       const fileBuffer = fs.readFileSync(filePath);
-      
+
       // Use Helia IPFS addFile function
       ipfsCID = await ipfs.addFile(fileBuffer, fileName);
-      
+
       result.flow[5].status = "completed";
       result.flow[5].cid = ipfsCID;
       result.ipfs = {
@@ -2349,9 +2528,9 @@ app.post("/verify", upload.single("document"), async (req, res) => {
         cid: ipfsCID,
         message: "Document stored on IPFS successfully"
       };
-      
+
       console.log(`✓ IPFS CID: ${ipfsCID}`);
-      
+
       // Save CID record
       saveCIDRecord(fileName, ipfsCID, documentId, confidence);
     } catch (error) {
@@ -2367,14 +2546,14 @@ app.post("/verify", upload.single("document"), async (req, res) => {
     // ===========================================
     // STEP 7: STORE ON BLOCKCHAIN
     // ===========================================
-    
+
     console.log("\n[STEP 7/7] ⛓️  Storing on blockchain...");
     result.flow.push({ step: 7, name: "Store on Blockchain", status: "processing" });
 
     try {
       // Per product flow, store the uploaded file name as owner identifier.
       const owner = fileName;
-      
+
       const blockchainResult = storeOnBlockchain({
         documentId,
         cid: ipfsCID,
@@ -2382,11 +2561,11 @@ app.post("/verify", upload.single("document"), async (req, res) => {
         owner,
         timestamp
       });
-      
+
       result.flow[6].status = "completed";
       result.flow[6].transactionHash = blockchainResult.transactionHash;
       result.flow[6].blockNumber = blockchainResult.blockNumber;
-      
+
       result.blockchain = {
         stored: true,
         transactionHash: blockchainResult.transactionHash,
@@ -2397,7 +2576,7 @@ app.post("/verify", upload.single("document"), async (req, res) => {
         owner,
         timestamp
       };
-      
+
       console.log(`✓ Blockchain TX: ${blockchainResult.transactionHash}`);
       console.log(`  Block: ${blockchainResult.blockNumber}`);
     } catch (error) {
@@ -2413,7 +2592,7 @@ app.post("/verify", upload.single("document"), async (req, res) => {
     // ===========================================
     //FINAL: VERIFICATION RECORD CREATED
     // ===========================================
-    
+
     console.log("\n[COMPLETE] 📝 Creating verification record...");
     result.flow.push({ step: 8, name: "Verification Record Created", status: "completed" });
 
@@ -2457,21 +2636,21 @@ app.post("/verify", upload.single("document"), async (req, res) => {
 
 // simple API key middleware (protects endpoints)
 app.use((req, res, next) => {
-    // Skip API key check for public endpoints
-    const publicPaths = ['/health', '/verify', '/api/verification-records', '/api/blockchain-records', '/cid-records', '/favicon.ico', '/create-will'];
-    const isPublicPath = 
-        publicPaths.includes(req.path) || 
-        req.path.startsWith('/api/ipfs/') || 
-        req.path.startsWith('/death-claim/') ||
-        req.path.startsWith('/will/');
-    
-    if (isPublicPath) {
-      if (req.path === '/favicon.ico') {
-        return res.status(204).end();
-      }
-      return next();
+  // Skip API key check for public endpoints
+  const publicPaths = ['/health', '/verify', '/api/verification-records', '/api/blockchain-records', '/cid-records', '/favicon.ico', '/create-will', '/test-email'];
+  const isPublicPath =
+    publicPaths.includes(req.path) ||
+    req.path.startsWith('/api/ipfs/') ||
+    req.path.startsWith('/death-claim/') ||
+    req.path.startsWith('/will/');
+
+  if (isPublicPath) {
+    if (req.path === '/favicon.ico') {
+      return res.status(204).end();
     }
-  
+    return next();
+  }
+
   const key = req.headers["x-api-key"];
   const expectedKey = process.env.API_KEY;
 
@@ -2566,20 +2745,20 @@ app.get('/api/blockchain-records', (req, res) => {
 app.get('/api/ipfs/preview/:cid', async (req, res) => {
   try {
     const { cid } = req.params;
-    
+
     if (!cid) {
       return res.status(400).json({ success: false, error: 'CID is required' });
     }
-    
+
     // Get file from IPFS
     const fileBuffer = await ipfs.getFile(cid);
-    
+
     // Find the original filename from CID storage
     const cidRecords = readJsonArraySafe(cidStorageFile);
     const record = cidRecords.find(r => r.cid === cid);
     const fileName = record?.fileName || 'document';
     const ext = path.extname(fileName).toLowerCase();
-    
+
     // For PDFs, serve directly for inline viewing
     if (ext === '.pdf') {
       res.setHeader('Content-Type', 'application/pdf');
@@ -2587,7 +2766,7 @@ app.get('/api/ipfs/preview/:cid', async (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
       return res.send(fileBuffer);
     }
-    
+
     // For DOCX files, extract text and return as HTML for preview
     if (ext === '.docx') {
       try {
@@ -2627,7 +2806,7 @@ app.get('/api/ipfs/preview/:cid', async (req, res) => {
         // Fallback to download if extraction fails
       }
     }
-    
+
     // For images, serve with appropriate content type
     if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'].includes(ext)) {
       const contentTypes = {
@@ -2643,7 +2822,7 @@ app.get('/api/ipfs/preview/:cid', async (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
       return res.send(fileBuffer);
     }
-    
+
     // For text files, serve as plain text
     if (['.txt', '.md', '.json', '.xml', '.csv'].includes(ext)) {
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -2651,7 +2830,7 @@ app.get('/api/ipfs/preview/:cid', async (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
       return res.send(fileBuffer);
     }
-    
+
     // Default: serve as HTML with file info
     const htmlContent = `
       <!DOCTYPE html>
@@ -2685,7 +2864,7 @@ app.get('/api/ipfs/preview/:cid', async (req, res) => {
     res.setHeader('Content-Type', 'text/html');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.send(htmlContent);
-    
+
   } catch (error) {
     console.error(`❌ Failed to preview IPFS file ${req.params.cid}:`, error.message);
     res.status(404).json({ success: false, error: 'File not found in IPFS' });
@@ -2696,24 +2875,24 @@ app.get('/api/ipfs/preview/:cid', async (req, res) => {
 app.get('/api/ipfs/download/:cid', async (req, res) => {
   try {
     const { cid } = req.params;
-    
+
     if (!cid) {
       return res.status(400).json({ success: false, error: 'CID is required' });
     }
-    
+
     // Get file from IPFS
     const fileBuffer = await ipfs.getFile(cid);
-    
+
     // Find the original filename from CID storage
     const cidRecords = readJsonArraySafe(cidStorageFile);
     const record = cidRecords.find(r => r.cid === cid);
     const fileName = record?.fileName || `file-${cid}`;
-    
+
     // Set headers for download
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.setHeader('Access-Control-Allow-Origin', '*');
-    
+
     // Send file
     res.send(fileBuffer);
   } catch (error) {
@@ -2733,11 +2912,11 @@ app.get('/health', async (req, res) => {
   try {
     await axios.get(`${ML_SERVICE_URL}/health`, { timeout: 3000 });
     mlServiceStatus = true;
-  } catch {}
-  
+  } catch { }
+
   const ipfsStatus = Boolean(ipfsInstance?.heliaNode);
   const blockchainStatus = await getBlockchainStatus();
-  
+
   res.json({
     service: "TrustChain Backend",
     status: "running",
@@ -2838,15 +3017,7 @@ app.post('/create-will', async (req, res) => {
       });
     }
 
-    const executorAddress = normalizeWalletAddress(
-      payload.executorAddress || payload.executorWalletAddress || payload.executor?.address
-    );
-    if (!executorAddress) {
-      return res.status(400).json({
-        status: 'ERROR',
-        message: 'A valid executorAddress is required'
-      });
-    }
+    const executorAddress = beneficiaryData.addresses[0];
 
     const executorEmail = String(payload.executorEmail || '').trim();
     if (!isValidEmail(executorEmail)) {
@@ -2859,17 +3030,17 @@ app.post('/create-will', async (req, res) => {
     const witnessesInput = Array.isArray(payload.witnesses)
       ? payload.witnesses
       : [
-          {
-            name: payload.witness1Name,
-            address: payload.witness1Address,
-            signature: payload.witness1Signature
-          },
-          {
-            name: payload.witness2Name,
-            address: payload.witness2Address,
-            signature: payload.witness2Signature
-          }
-        ];
+        {
+          name: payload.witness1Name,
+          address: payload.witness1Address,
+          signature: payload.witness1Signature
+        },
+        {
+          name: payload.witness2Name,
+          address: payload.witness2Address,
+          signature: payload.witness2Signature
+        }
+      ];
 
     const witnesses = witnessesInput
       .map((w) => ({
@@ -2903,6 +3074,7 @@ app.post('/create-will', async (req, res) => {
     // If ipfsOnly is requested (MetaMask flow), return now.
     // The email notification will be triggered by the frontend after the transaction completes.
     if (payload.ipfsOnly) {
+      console.log(`[CREATE-WILL] ipfsOnly=true. Persisting record for ${willId}...`);
       saveWillChainRecord({
         type: 'DIGITAL_WILL',
         timestamp: toIndiaIsoString(),
@@ -2937,11 +3109,11 @@ app.post('/create-will', async (req, res) => {
     const deathConditionSelectedForWorkflow = hasDeathCondition(payload?.conditions);
     const deathWorkflow = null;
     // ... existing legacy code ...
-    
+
     // Proactive balance check to prevent "could not coalesce" errors from failed gas estimation
     const autoFundAmountWei = deriveAutoFundAmountWei(payload);
     const minRequiredWei = autoFundAmountWei + ethers.parseEther('0.005'); // buffer for gas
-    
+
     // Skip balance check if frontend is handling the transaction
     if (!payload.ipfsOnly && balance < minRequiredWei) {
       return res.status(400).json({
@@ -3028,8 +3200,8 @@ app.post('/create-will', async (req, res) => {
     // Placeholder for legacy flow end
 
     const warnings = [];
-    if (!EMAIL_USER || !EMAIL_PASS) {
-      warnings.push('SMTP is not configured. Set EMAIL_USER and EMAIL_PASS to enable real beneficiary emails.');
+    if (!RESEND_API_KEY && (!EMAIL_USER || !EMAIL_PASS)) {
+      warnings.push('Email is not configured. Set RESEND_API_KEY or SMTP credentials (EMAIL_USER/EMAIL_PASS) to enable notifications.');
     }
     if (autoFundAmountWei <= 0n) {
       warnings.push('Auto-funding is disabled. Will execution will fail unless /will/:willId/fund is called before release time.');
@@ -3068,11 +3240,164 @@ app.post('/create-will', async (req, res) => {
     console.error('- Code:', error.code);
     console.error('- Data:', error.data);
     console.error('- Error Detail:', JSON.stringify(error, null, 2));
-    
+
     return res.status(500).json({
       status: 'ERROR',
       message: formatBlockchainError(error)
     });
+  }
+});
+
+// ==========================================
+// WILL MANAGEMENT API ROUTES
+// ==========================================
+
+// GET will status
+// GET will status
+app.get('/will/:willId', async (req, res) => {
+  try {
+    const willId = String(req.params.willId || '').trim();
+    if (!willId) return res.status(400).json({ status: 'ERROR', message: 'willId is required' });
+    const { contract } = await getDigitalWillSignerAndContract();
+    const willState = await getWillState(contract, willId);
+    return res.json({ status: 'SUCCESS', will: willState });
+  } catch (error) {
+    return res.status(500).json({ status: 'ERROR', message: formatBlockchainError(error) });
+  }
+});
+
+// POST notify stakeholders after MetaMask will creation
+app.post('/will/:willId/notify-creation', async (req, res) => {
+  const willId = String(req.params.willId || '').trim();
+  console.log(`[NOTIFY] Stakeholder creation notification triggered for ${willId}`);
+
+  try {
+    if (!willId) return res.status(400).json({ status: 'ERROR', message: 'willId is required' });
+
+    // Find the record to get the metadata CID
+    const records = readJsonArraySafe(blockchainRecordsFile);
+    const record = records.find(r => r.willId === willId);
+    if (!record || !record.metadataCid) {
+      return res.status(404).json({ status: 'ERROR', message: 'Will record or metadata CID not found' });
+    }
+
+    console.log(`[NOTIFY] ✓ Found record. Metadata CID: ${record.metadataCid}`);
+
+    let willMetadata = null;
+    if (ipfsInstance) {
+      try {
+        const buf = await ipfs.getFile(record.metadataCid);
+        willMetadata = JSON.parse(buf.toString('utf8'));
+      } catch (e) {
+        console.error(`[NOTIFY] ❌ Could not fetch metadata from IPFS:`, e.message);
+      }
+    }
+
+    if (!willMetadata) {
+      return res.status(502).json({ status: 'ERROR', message: 'Metadata retrieval failed. Email skipped.' });
+    }
+
+    // Register death-claim if condition requires it
+    let deathClaimUploadUrl = null;
+    if (hasDeathCondition(willMetadata.conditions)) {
+      const claim = createDeathClaimRecord({
+        willId,
+        metadataCid: record.metadataCid,
+        executorEmail: willMetadata.executorEmail,
+        beneficiaries: willMetadata.beneficiaries,
+        nominees: willMetadata.nominees
+      });
+
+      const host = req.get('host') || `localhost:${PORT}`;
+      const protocol = req.get('x-forwarded-proto') || req.protocol || 'http';
+      const backendBase = process.env.BACKEND_URL || `${protocol}://${host}`;
+      deathClaimUploadUrl = `${backendBase}/death-claim/upload?token=${claim.token}`;
+      console.log(`[NOTIFY] Death claim registered: ${claim.claimId}`);
+    }
+
+    // Send stakeholder creation emails
+    const emailResult = await sendStakeholderCreationEmails(willMetadata, {
+      uploadUrl: deathClaimUploadUrl,
+      claimId: deathClaimUploadUrl ? deathClaimUploadUrl.split('token=')[1] : null
+    });
+
+    if (emailResult.sent === 0 && emailResult.failed > 0) {
+      return res.status(502).json({
+        status: 'ERROR',
+        message: `Will created but emails failed: ${emailResult.reason || 'provider error'}`,
+        emails: emailResult
+      });
+    }
+
+    // Schedule the will for auto-execution
+    const releaseTime = Number(willMetadata.releaseTime || record.releaseTime || 0);
+    if (releaseTime > 0) {
+      scheduleWillExecution(willId, releaseTime);
+    }
+
+    return res.json({ status: 'SUCCESS', emails: emailResult, deathWorkflow: !!deathClaimUploadUrl });
+  } catch (error) {
+    console.error(`[NOTIFY] Critical error:`, error.message);
+    return res.status(500).json({ status: 'ERROR', message: error.message });
+  }
+});
+
+// POST fund a will
+app.post('/will/:willId/fund', async (req, res) => {
+  try {
+    const willId = String(req.params.willId || '').trim();
+    const amountWei = parsePositiveWeiOrEth(req.body || {});
+    if (!willId) return res.status(400).json({ status: 'ERROR', message: 'willId is required' });
+    if (!amountWei) return res.status(400).json({ status: 'ERROR', message: 'amount is required' });
+
+    const { provider, wallet, contract, readOnly } = await getDigitalWillSignerAndContract();
+    if (readOnly) return res.status(403).json({ status: 'ERROR', message: 'Backend is in Read-Only mode.' });
+
+    const nonceRef = { value: await provider.getTransactionCount(wallet.address, 'pending') };
+    const receipt = await sendContractTx((nonce) => contract.fundWill(willId, { value: amountWei, nonce }), provider, wallet.address, nonceRef);
+
+    const willState = await getWillState(contract, willId);
+    return res.json({ status: 'SUCCESS', message: 'Will funded', txHash: receipt.hash, will: willState });
+  } catch (error) {
+    return res.status(500).json({ status: 'ERROR', message: formatBlockchainError(error) });
+  }
+});
+
+// POST execute a will manually
+app.post('/will/:willId/execute', async (req, res) => {
+  try {
+    const willId = String(req.params.willId || '').trim();
+    if (!willId) return res.status(400).json({ status: 'ERROR', message: 'willId is required' });
+
+    clearScheduledWillExecution(willId);
+    const execution = await executeWillAndNotify(willId, 'manual');
+    if (execution.status === 'SKIPPED') {
+      if (execution.reason === 'Release time not reached yet') scheduleWillExecution(willId, execution.will.releaseTime);
+      return res.status(400).json({ status: 'ERROR', message: execution.reason, will: execution.will });
+    }
+    return res.json({ status: 'SUCCESS', message: 'Will executed', txHash: execution.txHash, will: execution.will });
+  } catch (error) {
+    return res.status(500).json({ status: 'ERROR', message: formatBlockchainError(error) });
+  }
+});
+
+// POST revoke a will
+app.post('/will/:willId/revoke', async (req, res) => {
+  try {
+    const willId = String(req.params.willId || '').trim();
+    if (!willId) return res.status(400).json({ status: 'ERROR', message: 'willId is required' });
+
+    clearScheduledWillExecution(willId);
+    const { provider, wallet, contract, readOnly } = await getDigitalWillSignerAndContract();
+    if (readOnly) return res.status(403).json({ status: 'ERROR', message: 'Backend is in Read-Only mode.' });
+
+    const nonceRef = { value: await provider.getTransactionCount(wallet.address, 'pending') };
+    const receipt = await sendContractTx((nonce) => contract.revokeWill(willId, { nonce }), provider, wallet.address, nonceRef);
+
+    const willState = await getWillState(contract, willId);
+    return res.json({ status: 'SUCCESS', message: 'Will revoked', txHash: receipt.hash, will: willState });
+  } catch (error) {
+    return res.status(500).json({ status: 'ERROR', message: formatBlockchainError(error) });
   }
 });
 
@@ -3135,15 +3460,33 @@ app.post('/death-claim/upload', deathCertificateUpload.single('deathCertificate'
       uploadedAt: toIndiaIsoString()
     }));
 
-    if (updatedClaim?.metadataCid && ipfsInstance) {
+    const host = req.get('host') || `localhost:${PORT}`;
+    const protocol = req.get('x-forwarded-proto') || req.protocol || 'http';
+    const approveUrl = `${protocol}://${host}/death-claim/approve?token=${token}`;
+    const certificatePublicUrl = `${protocol}://${host}/uploads/${encodeURIComponent(req.file.filename)}`;
+
+    let approvalMailSent = false;
+    let approvalMailError = '';
+
+    if (updatedClaim) {
       try {
-        const metadata = JSON.parse((await ipfs.getFile(updatedClaim.metadataCid)).toString('utf8'));
-        const host = req.get('host') || `localhost:${PORT}`;
-        const protocol = req.get('x-forwarded-proto') || req.protocol || 'http';
-        const approveUrl = `${protocol}://${host}/death-claim/approve?token=${token}`;
-        const certificatePublicUrl = `${protocol}://${host}/uploads/${encodeURIComponent(req.file.filename)}`;
-        await sendExecutorApprovalEmail(
-          metadata,
+        let metadata = null;
+        if (updatedClaim?.metadataCid && ipfsInstance) {
+          metadata = JSON.parse((await ipfs.getFile(updatedClaim.metadataCid)).toString('utf8'));
+        }
+
+        console.log(`[DEATH] Preparing executor notification for Will: ${updatedClaim.willId}`);
+        const mailPayload = metadata || {
+          id: updatedClaim.willId,
+          name: updatedClaim.willId,
+          executorEmail: updatedClaim.executorEmail,
+          beneficiaries: updatedClaim.beneficiaries || [],
+          nominees: updatedClaim.nominees || []
+        };
+
+        console.log(`[DEATH] Notifying executor: ${mailPayload.executorEmail}`);
+        const mailResult = await sendExecutorApprovalEmail(
+          mailPayload,
           approveUrl,
           updatedClaim.claimId,
           token,
@@ -3151,17 +3494,32 @@ app.post('/death-claim/upload', deathCertificateUpload.single('deathCertificate'
           req.file.path,
           certificatePublicUrl
         );
+        approvalMailSent = Boolean(mailResult?.sent);
+        console.log(`[DEATH] Executor notification result: ${approvalMailSent ? 'Sent' : 'Failed'}`);
       } catch (mailErr) {
-        console.error('[DEATH] Executor approval email failed:', mailErr.message);
+        approvalMailError = String(mailErr?.message || 'Executor approval email failed');
+        console.error('[DEATH] Executor approval process failed:', approvalMailError);
       }
     }
+
+    updateDeathClaimByToken(token, (existing) => ({
+      ...existing,
+      approvalMailSent,
+      approvalMailSentAt: approvalMailSent ? toIndiaIsoString() : existing?.approvalMailSentAt || null,
+      approvalMailError: approvalMailSent ? null : (approvalMailError || 'Executor approval email failed')
+    }));
+
+    const mailStatusBlock = approvalMailSent
+      ? '<p>The executor has received an email with certificate details and a <strong>Release Will</strong> button.</p>'
+      : `<p><strong>Warning:</strong> Executor email could not be delivered automatically${approvalMailError ? ` (${escapeHtml(approvalMailError)})` : ''}.</p>
+         <p>Use this manual approval link: <a href="${escapeHtml(approveUrl)}">Approve & Release Will</a></p>`;
 
     return res.send(`
       <h3>Certificate uploaded successfully.</h3>
       <p>Status: <strong>Waiting for executor approval</strong></p>
       <p>Claim ID: <strong>${escapeHtml(updatedClaim?.claimId || 'N/A')}</strong></p>
       <p>Token: <strong>${escapeHtml(token)}</strong></p>
-      <p>The executor has received an email with certificate details and a <strong>Release Will</strong> button.</p>
+      ${mailStatusBlock}
     `);
   } catch (error) {
     return res.status(500).send(`<h3>Upload failed: ${escapeHtml(error.message)}</h3>`);
@@ -3197,7 +3555,8 @@ app.get('/death-claim/approve', async (req, res) => {
       }
     }
 
-    if (execution.status !== 'EXECUTED') {
+    const isSuccessfulExecution = execution.status === 'EXECUTED' || execution.status === 'EXECUTED_READ_ONLY';
+    if (!isSuccessfulExecution) {
       return res.status(400).send(`<h3>Approval could not execute will: ${escapeHtml(execution.reason || 'Unknown reason')}</h3>`);
     }
 
@@ -3205,194 +3564,91 @@ app.get('/death-claim/approve', async (req, res) => {
       ...existing,
       status: 'APPROVED',
       approvedAt: toIndiaIsoString(),
-      executionTxHash: execution.txHash
+      executionTxHash: execution.txHash || null,
+      executionMode: execution.status
     }));
 
-    return res.send('<h3>Will approved and released successfully. Final data emails have been sent.</h3>');
+    const successMessage = execution.status === 'EXECUTED_READ_ONLY'
+      ? 'Will approved and document released successfully. Final emails have been sent. Beneficiaries can now use the release link in email to claim assets.'
+      : 'Will approved and released successfully. Final data emails have been sent.';
+
+    return res.send(`<h3>${successMessage}</h3>`);
   } catch (error) {
     return res.status(500).send(`<h3>Approval failed: ${escapeHtml(formatBlockchainError(error))}</h3>`);
   }
 });
 
-app.get('/will/:willId', async (req, res) => {
+app.get('/death-claim/resend-approval', async (req, res) => {
   try {
-    const willId = String(req.params.willId || '').trim();
-    if (!willId) {
-      return res.status(400).json({ status: 'ERROR', message: 'willId is required' });
+    const token = decodeURIComponent(String(req.query?.token || '').trim());
+
+    if (!token || /^your_token$/i.test(token) || /^<token>$/i.test(token)) {
+      return res.status(400).send('<h3>Missing or placeholder token. Use the full resend URL from your email (replace YOUR_TOKEN with the real token).</h3>');
     }
 
-    const { contract } = await getDigitalWillSignerAndContract();
-    const willState = await getWillState(contract, willId);
-    return res.json({ status: 'SUCCESS', will: willState });
-  } catch (error) {
-    return res.status(500).json({ status: 'ERROR', message: formatBlockchainError(error) });
-  }
-});
-
-app.post('/will/:willId/fund', async (req, res) => {
-  try {
-    const willId = String(req.params.willId || '').trim();
-    const amountWei = parsePositiveWeiOrEth(req.body || {});
-    if (!willId) {
-      return res.status(400).json({ status: 'ERROR', message: 'willId is required' });
-    }
-    if (!amountWei) {
-      return res.status(400).json({ status: 'ERROR', message: 'amountEth or amountWei must be provided and greater than 0' });
+    const claim = getDeathClaimByToken(token);
+    if (!claim) {
+      return res.status(404).send('<h3>Invalid resend link. Token not found.</h3>');
     }
 
-    const { provider, wallet, contract } = await getDigitalWillSignerAndContract();
-    const nonceRef = {
-      value: await provider.getTransactionCount(wallet.address, 'pending')
-    };
-
-    const receipt = await sendContractTx(
-      (nonce) => contract.fundWill(willId, { value: amountWei, nonce }),
-      provider,
-      wallet.address,
-      nonceRef
-    );
-
-    const willState = await getWillState(contract, willId);
-    return res.json({
-      status: 'SUCCESS',
-      message: 'Will funded successfully',
-      txHash: receipt.hash,
-      fundedAmountWei: String(amountWei),
-      fundedAmountEth: ethers.formatEther(amountWei),
-      will: willState
-    });
-  } catch (error) {
-    return res.status(500).json({ status: 'ERROR', message: formatBlockchainError(error) });
-  }
-});
-
-app.post('/will/:willId/execute', async (req, res) => {
-  try {
-    const willId = String(req.params.willId || '').trim();
-    if (!willId) {
-      return res.status(400).json({ status: 'ERROR', message: 'willId is required' });
+    if (claim.status === 'APPROVED') {
+      return res.send('<h3>This claim is already approved. No resend needed.</h3>');
     }
 
-    clearScheduledWillExecution(willId);
-    const execution = await executeWillAndNotify(willId, 'manual');
+    const host = req.get('host') || `localhost:${PORT}`;
+    const protocol = req.get('x-forwarded-proto') || req.protocol || 'http';
+    const approveUrl = `${protocol}://${host}/death-claim/approve?token=${token}`;
+    const fileName = claim?.certificateFilePath ? path.basename(claim.certificateFilePath) : '';
+    const certificatePublicUrl = fileName
+      ? `${protocol}://${host}/uploads/${encodeURIComponent(fileName)}`
+      : '';
 
-    if (execution.status === 'SKIPPED') {
-      if (execution.reason === 'Release time not reached yet') {
-        scheduleWillExecution(willId, execution.will.releaseTime);
+    let metadata = null;
+    if (claim?.metadataCid && ipfsInstance) {
+      try {
+        metadata = JSON.parse((await ipfs.getFile(claim.metadataCid)).toString('utf8'));
+      } catch {
+        metadata = null;
       }
-      return res.status(400).json({
-        status: 'ERROR',
-        message: execution.reason,
-        will: execution.will
-      });
     }
 
-    return res.json({
-      status: 'SUCCESS',
-      message: 'Will executed successfully',
-      txHash: execution.txHash,
-      will: execution.will,
-      email: execution.email
-    });
-  } catch (error) {
-    return res.status(500).json({ status: 'ERROR', message: formatBlockchainError(error) });
-  }
-});
-
-app.post('/will/:willId/notify-creation', async (req, res) => {
-  try {
-    const willId = String(req.params.willId || '').trim();
-    if (!willId) return res.status(400).json({ status: 'ERROR', message: 'willId is required' });
-
-    // Find the record to get the metadata CID
-    const records = readJsonArraySafe(blockchainRecordsFile);
-    const record = records.find(r => r.willId === willId);
-    if (!record || !record.metadataCid) {
-      return res.status(404).json({ status: 'ERROR', message: 'Will metadata not found' });
-    }
-
-    const metadataBuffer = await ipfs.getFile(record.metadataCid);
-    const metadata = JSON.parse(metadataBuffer.toString('utf8'));
-
-    const isDeathFlow = hasDeathCondition(metadata?.conditions || []);
-    
-    if (isDeathFlow) {
-      const claim = createDeathClaimRecord({
-        willId,
-        metadataCid: record.metadataCid,
-        executorEmail: metadata.executorEmail,
-        beneficiaries: metadata.beneficiaries,
-        nominees: metadata.nominees
-      });
-
-      const host = req.get('host') || `localhost:${PORT}`;
-      const protocol = req.get('x-forwarded-proto') || req.protocol || 'http';
-      const uploadUrl = `${protocol}://${host}/death-claim/upload?token=${claim.token}`;
-
-      await sendStakeholderCreationEmails(metadata, { uploadUrl, claimId: claim.claimId });
-      console.log(`[NOTIFY] Stakeholder emails sent for death-will ${willId}`);
-      
-      return res.json({ status: 'SUCCESS', message: 'Emails sent successfully', deathWorkflow: true });
-    } else {
-      await sendStakeholderCreationEmails(metadata);
-      scheduleWillExecution(willId, Number(metadata.releaseTime || record.releaseTime || 0));
-      console.log(`[NOTIFY] Stakeholder emails sent for time/age-will ${willId}`);
-      
-      return res.json({ status: 'SUCCESS', message: 'Email sent successfully', scheduled: true });
-    }
-  } catch (err) {
-    console.error(`[NOTIFY] Error triggering notification for ${req.params.willId}:`, err.message);
-    res.status(500).json({ status: 'ERROR', message: err.message });
-  }
-});
-
-app.post('/will/:willId/revoke', async (req, res) => {
-  try {
-    const willId = String(req.params.willId || '').trim();
-    if (!willId) {
-      return res.status(400).json({ status: 'ERROR', message: 'willId is required' });
-    }
-
-    clearScheduledWillExecution(willId);
-
-    const { provider, wallet, contract, readOnly } = await getDigitalWillSignerAndContract();
-    if (readOnly) {
-      return res.status(403).json({ 
-        status: 'ERROR', 
-        message: 'Backend is in Read-Only mode. Please revoke the will directly via MetaMask on the frontend.' 
-      });
-    }
-
-    const nonceRef = {
-      value: await provider.getTransactionCount(wallet.address, 'pending')
+    const mailPayload = metadata || {
+      id: claim.willId,
+      name: claim.willId,
+      executorEmail: claim.executorEmail,
+      beneficiaries: claim.beneficiaries || [],
+      nominees: claim.nominees || []
     };
 
-    const receipt = await sendContractTx(
-      (nonce) => contract.revokeWill(willId, { nonce }),
-      provider,
-      wallet.address,
-      nonceRef
+    await sendExecutorApprovalEmail(
+      mailPayload,
+      approveUrl,
+      claim.claimId,
+      token,
+      claim.certificateFileName,
+      claim.certificateFilePath,
+      certificatePublicUrl
     );
 
-    const willState = await getWillState(contract, willId);
-    return res.json({
-      status: 'SUCCESS',
-      message: 'Will revoked successfully',
-      txHash: receipt.hash,
-      will: willState
-    });
+    updateDeathClaimByToken(token, (existing) => ({
+      ...existing,
+      approvalMailSent: true,
+      approvalMailSentAt: toIndiaIsoString(),
+      approvalMailError: null
+    }));
+
+    return res.send('<h3>Executor approval email has been resent successfully.</h3>');
   } catch (error) {
-    return res.status(500).json({ status: 'ERROR', message: formatBlockchainError(error) });
+    return res.status(500).send(`<h3>Resend failed: ${escapeHtml(error.message)}</h3>`);
   }
 });
-
 const server = app.listen(PORT, async () => {
   console.log("\n" + "=".repeat(60));
   console.log("🚀 TrustChain Backend Server Started");
   console.log("=".repeat(60));
   console.log(`✓ Server: http://localhost:${PORT}`);
   console.log(`✓ ML Service: ${ML_SERVICE_URL}`);
-  
+
   // Initialize IPFS after server starts
   ipfsInstance = await ipfs.init();
   if (ipfsInstance) {
@@ -3407,7 +3663,7 @@ const server = app.listen(PORT, async () => {
   }
 
   await recoverWillSchedulesFromRecordsSafe();
-  
+
   let blockchainStatus = 'Ready';
   try {
     const { wallet, balance, readOnly } = await getDigitalWillSignerAndContract();
@@ -3421,6 +3677,13 @@ const server = app.listen(PORT, async () => {
   }
 
   console.log(`✓ Blockchain: ${blockchainStatus}`);
+  if (process.env.RESEND_API_KEY) {
+    console.log(`✓ Email: Resend configured (${EMAIL_FROM})`);
+  } else if (EMAIL_USER && EMAIL_PASS) {
+    console.log(`✓ Email: SMTP configured (${EMAIL_HOST}:${EMAIL_PORT}, from ${EMAIL_FROM})`);
+  } else {
+    console.log('⚠  Email: Not configured (set RESEND_API_KEY or EMAIL_USER/EMAIL_PASS)');
+  }
   console.log(`✓ Uploads: ${uploadsDir}`);
   console.log("=".repeat(60));
   console.log("\n📋 API Endpoints:");
@@ -3436,6 +3699,7 @@ const server = app.listen(PORT, async () => {
   console.log(`  POST   /will/:willId/revoke - Revoke Will`);
   console.log(`  POST   /upload - Upload Files`);
   console.log(`  GET    /files - List Files`);
+  console.log(`  GET    /test-email - Test Resend Email Configuration`);
   console.log("\n🔄 Verification Flow:");
   console.log(`  1. Extract Document Text (PDF/DOCX)`);
   console.log(`  2. Send to ML Model`);
@@ -3481,4 +3745,51 @@ process.on('unhandledRejection', (reason) => {
 
   console.error('[RUNTIME] Unhandled rejection:', reason);
   process.exit(1);
+});
+
+
+
+
+
+
+
+app.get("/test-email", async (req, res) => {
+  try {
+    if (!RESEND_API_KEY) {
+      return res.status(400).json({
+        status: 'ERROR',
+        message: 'RESEND_API_KEY is missing in backend environment.'
+      });
+    }
+
+    const to = String(req.query?.to || EMAIL_USER || '').trim();
+    if (!isValidEmail(to)) {
+      return res.status(400).json({
+        status: 'ERROR',
+        message: 'Provide a valid recipient using /test-email?to=you@example.com'
+      });
+    }
+
+    const subject = `TrustChain Email Test - ${toIndiaDisplayString(new Date())}`;
+    const html = '<h2>TrustChain Email Test</h2><p>Your backend email pipeline is working.</p>';
+
+    const delivery = await sendEmailViaResend({ to, subject, html, text: 'TrustChain email pipeline is working.' });
+
+    res.json({
+      status: 'SUCCESS',
+      message: 'Test email sent successfully.',
+      provider: delivery.provider,
+      to
+    });
+  } catch (err) {
+    const message = String(err?.message || err || 'Unknown error');
+    const likelyInvalidApiKey = /invalid api key|authentication|required|unauthorized|forbidden/i.test(message);
+
+    res.status(502).json({
+      status: 'ERROR',
+      message: likelyInvalidApiKey
+        ? 'Resend rejected the API key. Verify RESEND_API_KEY and restart backend.'
+        : message
+    });
+  }
 });

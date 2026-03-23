@@ -1,0 +1,45 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-03-22T21:53:36+05:30",
+  "id": "WILL-CHECK-1774196616595",
+  "name": "Check Runtime",
+  "testatorName": "t",
+  "testatorGuardianName": "g",
+  "testatorAge": "20",
+  "testatorAddress": "a",
+  "religion": "r",
+  "dob": "2000-01-01",
+  "place": "p",
+  "testatorSignature": "s",
+  "witnesses": [
+    {
+      "name": "w",
+      "address": "a",
+      "signature": "s"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Time",
+      "value": "2026-12-31T23:59"
+    }
+  ],
+  "executor": "ex",
+  "executorEmail": "23r21a6675@mlrit.ac.in",
+  "beneficiaries": [
+    {
+      "name": "b",
+      "email": "23r21a66a7@mlrit.ac.in",
+      "walletAddress": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "share": 100
+    }
+  ],
+  "nominees": [],
+  "assets": []
+}

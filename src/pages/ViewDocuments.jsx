@@ -9,6 +9,7 @@ const configuredBackendUrl = (
   ''
 ).trim();
 const API_BASE = (configuredBackendUrl || `http://${window.location.hostname}:5000`).replace(/\/$/, '');
+const API_KEY = (process.env.REACT_APP_API_KEY || 'trustchain_dummy_key').trim();
 const STORAGE_KEY = 'trustchain_documents';
 
 function ViewDocuments({ onNavigate }) {
@@ -135,7 +136,7 @@ function ViewDocuments({ onNavigate }) {
 
       const resp = await axios.post(`${API_BASE}/verify`, formData, {
         headers: {
-          'x-api-key': 'trustchain_dummy_key',
+          'x-api-key': API_KEY,
           'Content-Type': 'multipart/form-data'
         },
         onUploadProgress: (progressEvent) => {

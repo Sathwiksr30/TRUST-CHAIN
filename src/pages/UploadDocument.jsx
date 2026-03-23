@@ -8,6 +8,7 @@ const API_BASE = (
   process.env.REACT_APP_BACKEND_URL ||
   "http://localhost:5000"
 ).replace(/\/$/, "");
+const API_KEY = (process.env.REACT_APP_API_KEY || 'trustchain_dummy_key').trim();
 
 const UploadDocument = () => {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -21,7 +22,7 @@ const UploadDocument = () => {
     const checkBackend = async () => {
       try {
         await axios.get(`${API_BASE}/dashboard`, {
-          headers: { "x-api-key": "trustchain_dummy_key" },
+          headers: { "x-api-key": API_KEY },
           timeout: 3000
         });
         setBackendConnected(true);
@@ -68,7 +69,7 @@ const UploadDocument = () => {
         formData,
         {
           headers: {
-            "x-api-key": "trustchain_dummy_key",
+            "x-api-key": API_KEY,
             "Content-Type": "multipart/form-data"
           },
           timeout: 30000

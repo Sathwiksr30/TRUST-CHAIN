@@ -1,0 +1,51 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-03-22T21:41:52+05:30",
+  "id": "WILL-NO-EXEC-WALLET-1774195912574",
+  "name": "No Executor Wallet",
+  "testatorName": "Smoke User",
+  "testatorGuardianName": "Parent",
+  "testatorAge": "30",
+  "testatorAddress": "Hyd",
+  "religion": "Hindu",
+  "dob": "1995-01-01",
+  "place": "Hyd",
+  "testatorSignature": "sig",
+  "witnesses": [
+    {
+      "name": "W1",
+      "address": "Hyd",
+      "signature": "w1sig"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Time",
+      "value": "2026-12-31T23:59"
+    }
+  ],
+  "executor": "Executor Name",
+  "executorEmail": "23r21a6675@mlrit.ac.in",
+  "beneficiaries": [
+    {
+      "name": "Ben",
+      "email": "23r21a66a7@mlrit.ac.in",
+      "walletAddress": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "share": 100
+    }
+  ],
+  "nominees": [],
+  "assets": [
+    {
+      "type": "Cash",
+      "description": "Savings",
+      "value": "1000"
+    }
+  ]
+}

@@ -13,6 +13,7 @@ const API_BASE = (
   process.env.REACT_APP_BACKEND_URL ||
   `http://${window.location.hostname}:5000`
 ).replace(/\/$/, "");
+const API_KEY = (process.env.REACT_APP_API_KEY || 'trustchain_dummy_key').trim();
 
 const EVM_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -151,10 +152,6 @@ function validateWillPayload(formData) {
     }
   }
 
-  if (!isValidEvmAddress(formData.executorAddress)) {
-    return 'Executor wallet address is invalid.';
-  }
-
   const executorEmail = String(formData.executorEmail || '').trim();
   if (!executorEmail) {
     return 'Executor email is required.';
@@ -267,15 +264,15 @@ async function createWillOnChain(willData, setProgress) {
     signer
   );
 
-  if (setProgress) setProgress("1/2: Confirming Will Creation...");
+  if (setProgress) setProgress("2/4: Configuring Will on Blockchain...");
   console.log(`[BLOCKCHAIN] Creating will ${willData.willId} on-chain...`);
 
   // 1️⃣ Step 3.1: Create Will (0 ETH)
-  // Gas Limit set to 300,000 to be extremely safe for Sepolia congestion
-  const beneficiary = String(willData.beneficiary || "").trim();
+  // Registers the primary beneficiary
+  const primaryBeneficiary = String(willData.primaryBeneficiary || "").trim();
   const createTx = await contract.createWill(
     willData.willId,
-    beneficiary,
+    primaryBeneficiary,
     willData.cid,
     willData.releaseTime,
     { gasLimit: 300000 } 
@@ -283,15 +280,49 @@ async function createWillOnChain(willData, setProgress) {
   await createTx.wait();
   console.log("✅ Will Created on-chain");
 
-  if (setProgress) setProgress("2/2: Confirming Execution Funding (0.0003 ETH)...");
+  // 2️⃣ Step 3.2: Set ALL Beneficiaries if there are multiple
+  if (Array.isArray(willData.beneficiaries) && willData.beneficiaries.length > 0) {
+    if (setProgress) setProgress("2.5/4: Registering All Beneficiaries...");
+    console.log(`[BLOCKCHAIN] Registering ${willData.beneficiaries.length} beneficiaries...`);
+    
+    const addresses = willData.beneficiaries.map(b => b.walletAddress);
+    // Convert 0-100% to Basis Points (0-10000)
+    const sharesBps = willData.beneficiaries.map(b => Math.round(Number(b.share) * 100));
+    
+    try {
+      const setBenTx = await contract.setBeneficiaries(willData.willId, addresses, sharesBps, { gasLimit: 200000 });
+      await setBenTx.wait();
+      console.log("✅ Beneficiaries Registered on-chain");
+    } catch (benErr) {
+      console.error("Failed to set multiple beneficiaries on-chain:", benErr);
+      // We don't necessarily throw here if it's just a secondary step, but it might be critical for access
+    }
+  }
+
+  // 3️⃣ Step 3.3: Set Executor if provided
+  if (willData.executorAddress && willData.executorAddress !== ethers.ZeroAddress) {
+    if (setProgress) setProgress("2.8/4: Registering Executor...");
+    console.log(`[BLOCKCHAIN] Registering executor ${willData.executorAddress}...`);
+    try {
+      const setExTx = await contract.setExecutor(willData.willId, willData.executorAddress, { gasLimit: 100000 });
+      await setExTx.wait();
+      console.log("✅ Executor Registered on-chain");
+    } catch (exErr) {
+      console.error("Failed to set executor on-chain:", exErr);
+    }
+  }
+
+  if (setProgress) setProgress("3/4: Confirming Execution Funding (0.0003 ETH)...");
   
-  // 2️⃣ Step 3.2: Fund Will (0.0003 ETH)
+  // 4️⃣ Step 3.4: Fund Will (0.0003 ETH)
   const fundTx = await contract.fundWill(willData.willId, {
     value: ethers.parseEther("0.0003"),
     gasLimit: 150000 
   });
   await fundTx.wait();
   console.log("✅ Will Funded on-chain");
+  
+  if (setProgress) setProgress("4/4: Finalizing...");
 }
 
 function CreateWill({ onNavigate }) {
@@ -314,7 +345,6 @@ function CreateWill({ onNavigate }) {
     conditions: [],
     executorName: '',
     executorEmail: '',
-    executorAddress: '',
     beneficiaries: [],
     nominees: [],
     assets: []
@@ -524,7 +554,6 @@ function CreateWill({ onNavigate }) {
       uploadDate: toIndiaDateString(),
       executor: formData.executorName,
       executorEmail: formData.executorEmail,
-      executorAddress: formData.executorAddress,
       beneficiaries: formData.beneficiaries,
       nominees: formData.nominees,
       assets: formData.assets,
@@ -534,12 +563,13 @@ function CreateWill({ onNavigate }) {
     };
 
     setCreating(true);
+    setProgressMessage("1/3: Generating Secure Document (IPFS)...");
     try {
       // 1. Backend: Upload to IPFS / Generate metadata
       const res = await axios.post(
         `${API_BASE}/create-will`,
         { ...newWill, ipfsOnly: true },
-        { headers: { 'x-api-key': 'trustchain_dummy_key' } }
+        { headers: { 'x-api-key': API_KEY } }
       );
 
       const resData = res.data;
@@ -548,12 +578,15 @@ function CreateWill({ onNavigate }) {
       // 2. Blockchain: MetaMask transaction
       await createWillOnChain({
         willId: resData.willId,
-        beneficiary: (formData.beneficiaries[0].walletAddress || "").trim(),
+        primaryBeneficiary: (formData.beneficiaries[0].walletAddress || "").trim(),
+        beneficiaries: formData.beneficiaries,
+        executorAddress: (formData.executorWallet || "0x0000000000000000000000000000000000000000"),
         cid: cid,
         releaseTime: resData.releaseTime || 0
       }, setProgressMessage);
 
       const blockchain = {
+
         executed: false,
         revoked: false,
         ownerAddress: 'MetaMask Wallet',
@@ -573,11 +606,26 @@ function CreateWill({ onNavigate }) {
 
       // 3. Trigger backend notification (Emails) AFTER successful blockchain confirmation
       try {
-        await axios.post(`${API_BASE}/will/${encodeURIComponent(resData.willId)}/notify-creation`);
-        console.log("Successfully triggered post-creation notifications.");
+        const notifyResponse = await axios.post(
+          `${API_BASE}/will/${encodeURIComponent(resData.willId)}/notify-creation`,
+          {},
+          { headers: { 'x-api-key': API_KEY } }
+        );
+
+        const notifyData = notifyResponse?.data || {};
+        const notifySucceeded =
+          notifyData.success === true ||
+          notifyData.status === 'SUCCESS' ||
+          (notifyData.emails && Number(notifyData.emails.sent || 0) > 0);
+
+        if (!notifySucceeded) {
+          throw new Error(notifyData.message || 'Post-creation notification endpoint did not confirm any sent emails.');
+        }
+
+        console.log("Successfully triggered post-creation notifications.", notifyData);
       } catch (notifyErr) {
         console.error("Failed to trigger post-creation notifications:", notifyErr.message);
-        // We don't block the UI here as the will is already on-chain
+        alert(`Will created on-chain, but email notification failed: ${notifyErr.message}`);
       }
 
       alert('Digital Will created successfully! Your transaction was confirmed on the blockchain.');
@@ -596,25 +644,27 @@ function CreateWill({ onNavigate }) {
         conditions: [],
         executorName: '',
         executorEmail: '',
-        executorAddress: '',
+        executorWallet: '',
         beneficiaries: [],
         nominees: [],
         assets: []
       });
     } catch (err) {
       console.error('Create will error', err);
-      
-      // Extract better error message from Ethers or Axios
+
+      // Prefer backend validation message for HTTP errors; then fall back to wallet/RPC errors.
       let errorMessage = 'Could not create will on blockchain.';
-      
+
       if (err?.code === 'ACTION_REJECTED') {
         errorMessage = '❌ Transaction cancelled by user.';
-      } else if (err?.info?.error?.message || err?.error?.message || err?.message) {
-        errorMessage = `❌ Blockchain Error: ${err?.info?.error?.message || err?.error?.message || err?.message}`;
       } else if (err?.response?.data?.message) {
         errorMessage = `❌ Backend Error: ${err.response.data.message}`;
+      } else if (err?.response?.data?.error) {
+        errorMessage = `❌ Backend Error: ${err.response.data.error}`;
+      } else if (err?.info?.error?.message || err?.error?.message || err?.message) {
+        errorMessage = `❌ Blockchain Error: ${err?.info?.error?.message || err?.error?.message || err?.message}`;
       }
-      
+
       alert(errorMessage);
     } finally {
       setCreating(false);
@@ -962,14 +1012,15 @@ function Executor({ formData, onInputChange, onNext, onPrevious }) {
           </div>
 
           <div className="form-group">
-            <label htmlFor="executorAddress">Executor Wallet Address (for blockchain)</label>
+            <label htmlFor="executorWallet">Executor Wallet Address (for on-chain approval)</label>
             <input
               type="text"
-              id="executorAddress"
+              id="executorWallet"
               placeholder="0x..."
-              value={formData.executorAddress}
-              onChange={(e) => onInputChange('executorAddress', e.target.value)}
+              value={formData.executorWallet || ''}
+              onChange={(e) => onInputChange('executorWallet', e.target.value)}
             />
+            <small>Executor wallet is required if they need to approve the asset release on-chain.</small>
           </div>
         </div>
 
@@ -1327,7 +1378,8 @@ function Review({ formData, creating, onPrevious, onCreateWill }) {
 
           <div className="review-item">
             <strong>Executor</strong>
-            <span>{formData.executorName || 'Not specified'} {formData.executorAddress ? `(${formData.executorAddress})` : ''}</span>
+            <span>{formData.executorName || 'Not specified'}</span>
+            {formData.executorWallet && <span>Wallet: {formData.executorWallet}</span>}
           </div>
 
           <div className="review-item">

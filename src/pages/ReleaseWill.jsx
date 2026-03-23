@@ -19,6 +19,8 @@ function ReleaseWill({ willId, onNavigate }) {
         const provider = new ethers.BrowserProvider(window.ethereum);
         const network = await provider.getNetwork();
         
+        console.log(`[RELEASE] Connecting to willId: ${willId} on chain: ${network.chainId}`);
+
         if (network.chainId !== 11155111n) {
           try {
             await window.ethereum.request({
@@ -34,17 +36,46 @@ function ReleaseWill({ willId, onNavigate }) {
         const contract = new ethers.Contract(CONTRACT_ADDRESS, contractABI.abi, signer);
 
         setStatus('confirming');
-        console.log(`Executing will ${willId} on-chain...`);
+        console.log(`[RELEASE] Executing executeWill("${willId}") on-chain...`);
         
-        const tx = await contract.executeWill(willId, { gasLimit: 250000 });
+        // --- Diagnostics: Gas Estimation ---
+        // This helps identify reverts BEFORE sending the transaction
+        let gasLimit;
+        try {
+          const estimatedGas = await contract.executeWill.estimateGas(willId);
+          gasLimit = (estimatedGas * 12n) / 10n; // 20% buffer
+          console.log(`[RELEASE] Estimated Gas: ${estimatedGas}, using Limit: ${gasLimit}`);
+        } catch (estError) {
+          console.error("[RELEASE] Gas estimation failed. Reverting?", estError);
+          
+          // Try to decode common revert reasons
+          let reason = "The transaction would fail. ";
+          if (estError.message.includes("ConditionNotMet")) reason = "Conditions not yet met. If this is a recent claim, please wait 30 seconds for the blockchain to synchronize and try again.";
+          else if (estError.message.includes("NotAuthorized")) reason = "You are not authorized to release this will.";
+          else if (estError.message.includes("WillAlreadyExecuted")) reason += "This will has already been executed.";
+          else if (estError.message.includes("WillRevoked")) reason += "This will has been revoked.";
+          else if (estError.message.includes("NoFundsAvailable")) reason += "No funds available in the will.";
+          else reason += (estError.reason || estError.message || "Unknown reason");
+          
+          throw new Error(reason);
+        }
+
+        // --- Execute Transaction ---
+        const tx = await contract.executeWill(willId, { gasLimit });
+        console.log(`[RELEASE] Transaction sent: ${tx.hash}`);
         
         setStatus('pending');
-        await tx.wait();
+        const receipt = await tx.wait();
+        console.log(`[RELEASE] Transaction confirmed:`, receipt);
+
+        if (receipt.status === 0) {
+          throw new Error("Transaction execution failed on the blockchain.");
+        }
         
         setStatus('success');
       } catch (err) {
-        console.error("Release error:", err);
-        setError(err.reason || err.message || "Execution failed. The inheritance may have already been claimed, or conditions are not met.");
+        console.error("[RELEASE] Error:", err);
+        setError(err.reason || err.message || "Execution failed. Check your network or wallet permissions.");
         setStatus('error');
       }
     };
