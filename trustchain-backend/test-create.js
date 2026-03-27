@@ -6,7 +6,6 @@ async function test() {
     const res = await axios.post('http://localhost:5000/create-will', {
       id: 'WILL-TEST-123',
       testatorName: 'Test Name',
-      executorEmail: 'test@example.com',
       ipfsOnly: true,
       conditions: [],
       beneficiaries: [{ name: 'Ben', email: 'ben@example.com', walletAddress: '0x1234567890123456789012345678901234567890', share: 100 }],

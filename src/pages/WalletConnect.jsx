@@ -58,9 +58,9 @@ function WalletConnect({ onConnected }) {
         {error && <div className="wallet-error">{error}</div>}
 
         <ul className="wallet-hints">
-          <li>Required network: Hardhat Localhost (Chain ID 31337)</li>
-          <li>Required RPC URL: http://127.0.0.1:8545</li>
-          <li>Start node before opening app: npx hardhat node</li>
+          <li>Required network: Sepolia Testnet</li>
+          <li>Unlock MetaMask before clicking connect</li>
+          <li>If connection fails, refresh and try once more</li>
         </ul>
       </div>
     </div>

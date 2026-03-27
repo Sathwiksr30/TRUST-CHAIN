@@ -117,6 +117,8 @@ function Dashboard({ onNavigate }) {
     setSelectedIds([]);
   };
 
+  // Removed handleClaim - claims are now handled on the dedicated ClaimPage via email link
+
   return (
     <div className="dashboard-page">
       <main className="dashboard-main">
@@ -232,20 +234,24 @@ function Dashboard({ onNavigate }) {
                       {doc.type || 'Document'} • {doc.uploadDate}
                     </div>
                   </div>
-                  <div className="document-right-actions">
-                    {doc.status && (
-                      <span className={`status ${doc.status.toLowerCase()}`}>
-                        {doc.status}
-                      </span>
-                    )}
-                    <div className="document-select-col">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.includes(doc.id)}
-                        onChange={() => toggleSelectOne(doc.id)}
-                      />
+                    <div className="document-right-actions">
+                      {doc.status && (
+                        <span className={`status ${doc.status.toLowerCase()}`}>
+                          {doc.status}
+                        </span>
+                      )}
+                      
+                      {/* Action buttons removed - now driven by email links */}
+
+
+                      <div className="document-select-col">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(doc.id)}
+                          onChange={() => toggleSelectOne(doc.id)}
+                        />
+                      </div>
                     </div>
-                  </div>
                 </div>
               ))}
             </div>

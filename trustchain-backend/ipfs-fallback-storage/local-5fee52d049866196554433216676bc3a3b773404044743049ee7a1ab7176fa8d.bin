@@ -1,0 +1,42 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-03-27T01:14:56+05:30",
+  "id": "WILL-TEST-1774554296495",
+  "testatorName": "Test User",
+  "testatorGuardianName": "",
+  "testatorAge": "",
+  "testatorAddress": "",
+  "religion": "",
+  "dob": "",
+  "place": "",
+  "testatorSignature": "",
+  "witnesses": [
+    {
+      "name": "W1",
+      "address": "Addr",
+      "signature": "Sig"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Time",
+      "value": "2026-03-27T19:44:56.495Z"
+    }
+  ],
+  "beneficiaries": [
+    {
+      "name": "Ben",
+      "email": "ben@example.com",
+      "walletAddress": "0x8476f015ca3A7e8F5075806128305B31b3470641",
+      "share": 100
+    }
+  ],
+  "nominees": [],
+  "assets": []
+}

@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-03-27T12:06:05+05:30",
+  "id": "WILL-1774593363885",
+  "name": "sdasdasd",
+  "description": "Execute upon verified death",
+  "testatorName": "dasdasd",
+  "testatorGuardianName": "asdasds",
+  "testatorAge": "85",
+  "testatorAddress": "dasda",
+  "religion": "asdasd",
+  "dob": "2005-08-30",
+  "place": "aasfas",
+  "testatorSignature": "asasd",
+  "witnesses": [
+    {
+      "name": "shalini",
+      "address": "hyd",
+      "signature": "shalini"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Death",
+      "value": ""
+    }
+  ],
+  "owner": "0xe73f36a707b1e89cec0a937ce4c86d3629df57b1",
+  "beneficiaries": [
+    {
+      "name": "dsdas",
+      "email": "challasathwikreddy55@gmail.com",
+      "walletAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266 ",
+      "share": 100
+    }
+  ],
+  "nominees": [
+    {
+      "name": "sadds",
+      "email": "23r21a6675@mlrit.ac.in",
+      "relation": "siso",
+      "walletAddress": ""
+    }
+  ],
+  "assets": [
+    {
+      "type": "Real Estate",
+      "description": "adad",
+      "value": "78451"
+    }
+  ]
+}

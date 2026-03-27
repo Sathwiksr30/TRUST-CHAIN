@@ -1,0 +1,51 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-03-27T10:35:50+05:30",
+  "id": "WILL-1774587946490",
+  "name": "sai",
+  "description": "Execute after 27 March 2026 at 10:40:00 am",
+  "testatorName": "adsfadsfas",
+  "testatorGuardianName": "asfadfadf",
+  "testatorAge": "22",
+  "testatorAddress": "ascasdasd",
+  "religion": "aas",
+  "dob": "2000-02-02",
+  "place": "aasfas",
+  "testatorSignature": "casdasd",
+  "witnesses": [
+    {
+      "name": "aasdasas",
+      "address": "asfas",
+      "signature": "shalini"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Time",
+      "value": "2026-03-27T10:40"
+    }
+  ],
+  "owner": "0xe73f36a707b1e89cec0a937ce4c86d3629df57b1",
+  "beneficiaries": [
+    {
+      "name": "dds",
+      "email": "challasathwikreddy55@gmail.com",
+      "walletAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266 ",
+      "share": 100
+    }
+  ],
+  "nominees": [],
+  "assets": [
+    {
+      "type": "Digital Assets",
+      "description": "sdasda",
+      "value": "54812"
+    }
+  ]
+}

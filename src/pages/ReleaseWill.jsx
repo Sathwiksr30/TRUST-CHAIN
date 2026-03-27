@@ -1,126 +1,150 @@
-import React, { useState, useEffect } from 'react';
-import { ethers } from 'ethers';
-import contractABI from '../abi/DigitalWill.json';
+import React, { useState } from 'react';
+import axios from 'axios';
 
-const CONTRACT_ADDRESS = "0x009B1e24Eb61B7B63DaFCC4bbDE86B17Ded48048";
+const API_BASE = process.env.REACT_APP_BACKEND_URL || `http://${window.location.hostname}:5000`;
 
-function ReleaseWill({ willId, onNavigate }) {
-  const [status, setStatus] = useState('initializing');
+function ReleaseWill({ willId: propWillId, onNavigate }) {
+  const [file, setFile] = useState(null);
+  const [status, setStatus] = useState('idle'); // idle, uploading, verifying, executing, success, error
   const [error, setError] = useState(null);
+  const [progress, setProgress] = useState(0);
 
-  useEffect(() => {
-    const triggerRelease = async () => {
-      try {
-        if (!window.ethereum) {
-          throw new Error("MetaMask not found. Please open this link in a browser with MetaMask installed.");
+  // Extract willId from URL if not provided via props
+  const [searchParams] = new URLSearchParams(window.location.search);
+  const willId = propWillId || searchParams.get('willId');
+
+  const handleFileChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      setFile(e.target.files[0]);
+    }
+  };
+
+  const handleVerify = async () => {
+    if (!file) {
+      alert("Please upload a death certificate.");
+      return;
+    }
+
+    if (!willId) {
+      alert("Will ID is missing. Please use the link from your email.");
+      return;
+    }
+
+    setStatus('uploading');
+    setError(null);
+
+    const formData = new FormData();
+    formData.append('willId', willId);
+    formData.append('certificate', file);
+
+    try {
+      const response = await axios.post(`${API_BASE}/verify-death-and-execute`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        },
+        onUploadProgress: (progressEvent) => {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          setProgress(percentCompleted);
         }
+      });
 
-        setStatus('connecting');
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        const network = await provider.getNetwork();
-        
-        console.log(`[RELEASE] Connecting to willId: ${willId} on chain: ${network.chainId}`);
-
-        if (network.chainId !== 11155111n) {
-          try {
-            await window.ethereum.request({
-              method: 'wallet_switchEthereumChain',
-              params: [{ chainId: '0xaa36a7' }], 
-            });
-          } catch (err) {
-            throw new Error("Please switch your MetaMask to the Sepolia Testnet.");
-          }
-        }
-
-        const signer = await provider.getSigner();
-        const contract = new ethers.Contract(CONTRACT_ADDRESS, contractABI.abi, signer);
-
-        setStatus('confirming');
-        console.log(`[RELEASE] Executing executeWill("${willId}") on-chain...`);
-        
-        // --- Diagnostics: Gas Estimation ---
-        // This helps identify reverts BEFORE sending the transaction
-        let gasLimit;
-        try {
-          const estimatedGas = await contract.executeWill.estimateGas(willId);
-          gasLimit = (estimatedGas * 12n) / 10n; // 20% buffer
-          console.log(`[RELEASE] Estimated Gas: ${estimatedGas}, using Limit: ${gasLimit}`);
-        } catch (estError) {
-          console.error("[RELEASE] Gas estimation failed. Reverting?", estError);
-          
-          // Try to decode common revert reasons
-          let reason = "The transaction would fail. ";
-          if (estError.message.includes("ConditionNotMet")) reason = "Conditions not yet met. If this is a recent claim, please wait 30 seconds for the blockchain to synchronize and try again.";
-          else if (estError.message.includes("NotAuthorized")) reason = "You are not authorized to release this will.";
-          else if (estError.message.includes("WillAlreadyExecuted")) reason += "This will has already been executed.";
-          else if (estError.message.includes("WillRevoked")) reason += "This will has been revoked.";
-          else if (estError.message.includes("NoFundsAvailable")) reason += "No funds available in the will.";
-          else reason += (estError.reason || estError.message || "Unknown reason");
-          
-          throw new Error(reason);
-        }
-
-        // --- Execute Transaction ---
-        const tx = await contract.executeWill(willId, { gasLimit });
-        console.log(`[RELEASE] Transaction sent: ${tx.hash}`);
-        
-        setStatus('pending');
-        const receipt = await tx.wait();
-        console.log(`[RELEASE] Transaction confirmed:`, receipt);
-
-        if (receipt.status === 0) {
-          throw new Error("Transaction execution failed on the blockchain.");
-        }
-        
+      console.log("[VERIFY] Response:", response.data);
+      
+      if (response?.data?.status === 'SUCCESS' || response?.data?.success === true) {
         setStatus('success');
-      } catch (err) {
-        console.error("[RELEASE] Error:", err);
-        setError(err.reason || err.message || "Execution failed. Check your network or wallet permissions.");
-        setStatus('error');
+      } else {
+        throw new Error(response.data.message || "Verification failed.");
       }
-    };
-
-    if (willId) {
-      triggerRelease();
-    } else {
-      setError("No Will ID provided in the link.");
+    } catch (err) {
+      console.error("[VERIFY] Error:", err);
+      setError(err.response?.data?.message || err.message || "An error occurred during verification.");
       setStatus('error');
     }
-  }, [willId]);
+  };
 
   return (
     <div className="page release-will-page" style={{ padding: '60px 20px', textAlign: 'center', maxWidth: '600px', margin: '0 auto' }}>
       <div className="release-card" style={{ background: 'white', padding: '40px', borderRadius: '15px', boxShadow: '0 10px 30px rgba(0,0,0,0.1)' }}>
-        <h2 style={{ color: '#2d3748', marginBottom: '20px' }}>TrustChain: Digital Asset Release</h2>
+        <h2 style={{ color: '#2d3748', marginBottom: '10px' }}>Death Verification</h2>
+        <p style={{ color: '#718096', marginBottom: '30px' }}>
+          Upload a valid death certificate to trigger the automated release of the Digital Will <strong>{willId}</strong>.
+        </p>
         
-        {status === 'initializing' && <p>Preparing secure connection...</p>}
-        {status === 'connecting' && <p>Connecting to Sepolia Blockchain...</p>}
-        
-        {status === 'confirming' && (
-          <div className="status-box">
-             <i className="fas fa-wallet fa-3x" style={{ color: '#667eea', marginBottom: '20px' }}></i>
-             <p style={{ fontSize: '18px', fontWeight: '600' }}>Confirm Asset Release</p>
-             <p>Please confirm the transaction in your <strong>MetaMask</strong> to receive the assets directly into your wallet.</p>
+        {status === 'idle' && (
+          <div className="upload-section">
+            <div 
+              className="file-drop-zone" 
+              style={{ 
+                border: '2px dashed #cbd5e0', 
+                padding: '40px', 
+                borderRadius: '10px', 
+                marginBottom: '20px',
+                cursor: 'pointer',
+                background: '#f7fafc'
+              }}
+              onClick={() => document.getElementById('death-cert-upload').click()}
+            >
+              <i className="fas fa-file-upload fa-3x" style={{ color: '#667eea', marginBottom: '15px' }}></i>
+              <p>{file ? file.name : "Click to select or drag & drop Death Certificate (PDF/JPG/PNG)"}</p>
+              <input 
+                type="file" 
+                id="death-cert-upload" 
+                style={{ display: 'none' }} 
+                onChange={handleFileChange}
+                accept=".pdf,.jpg,.jpeg,.png"
+              />
+            </div>
+            <button 
+              onClick={handleVerify}
+              disabled={!file}
+              style={{ 
+                width: '100%',
+                padding: '14px', 
+                background: file ? '#667eea' : '#cbd5e0', 
+                color: 'white', 
+                border: 'none', 
+                borderRadius: '8px', 
+                cursor: file ? 'pointer' : 'not-allowed',
+                fontWeight: '600',
+                fontSize: '16px',
+                transition: 'background 0.3s'
+              }}
+            >
+              Verify and Execute Will
+            </button>
           </div>
         )}
 
-        {status === 'pending' && (
+        {status === 'uploading' && (
           <div className="status-box">
              <i className="fas fa-spinner fa-spin fa-3x" style={{ color: '#667eea', marginBottom: '20px' }}></i>
-             <p style={{ fontSize: '18px', fontWeight: '600' }}>Processing Distribution...</p>
-             <p>The blockchain is verifying the asset transfer. This usually takes 10-20 seconds.</p>
+             <p style={{ fontSize: '18px', fontWeight: '600' }}>Uploading Certificate... {progress}%</p>
+             <p>Securing document transfer to verification engine.</p>
+          </div>
+        )}
+
+        {(status === 'verifying' || (status === 'uploading' && progress === 100)) && (
+          <div className="status-box">
+             <i className="fas fa-shield-alt fa-3x fa-pulse" style={{ color: '#4c51bf', marginBottom: '20px' }}></i>
+             <p style={{ fontSize: '18px', fontWeight: '600' }}>Verifying Authenticity...</p>
+             <p>Our AI engine is checking the death certificate for validity. This might take 30-60 seconds.</p>
           </div>
         )}
 
         {status === 'success' && (
           <div className="status-box">
              <i className="fas fa-check-circle fa-4x" style={{ color: '#48bb78', marginBottom: '20px' }}></i>
-             <h3 style={{ color: '#2f855a' }}>🎉 Inheritance Received!</h3>
-             <p>The Digital Assets have been successfully transferred to your wallet.</p>
+             <h3 style={{ color: '#2f855a' }}>✅ Verification Successful!</h3>
+             <p>The death certificate has been verified. The Digital Will has been executed on-chain.</p>
+             <div style={{ background: '#f0fff4', border: '1px solid #c6f6d5', padding: '15px', borderRadius: '8px', margin: '20px 0' }}>
+                <p style={{ margin: 0, fontSize: '14px', color: '#2f855a' }}>
+                  <strong>Next Step:</strong> The will has been executed. Check your inbox for the <strong>Claim My Rewards</strong> email to receive your assets.
+                </p>
+             </div>
              <button 
                onClick={() => onNavigate('dashboard')}
                style={{ 
-                 marginTop: '30px', 
+                 marginTop: '10px', 
                  padding: '12px 24px', 
                  background: '#667eea', 
                  color: 'white', 
@@ -138,10 +162,10 @@ function ReleaseWill({ willId, onNavigate }) {
         {status === 'error' && (
           <div className="status-box">
              <i className="fas fa-exclamation-triangle fa-4x" style={{ color: '#e53e3e', marginBottom: '20px' }}></i>
-             <h3 style={{ color: '#c53030' }}>Unable to Release Assets</h3>
+             <h3 style={{ color: '#c53030' }}>Verification Failed</h3>
              <p style={{ color: '#718096' }}>{error}</p>
              <button 
-               onClick={() => window.location.reload()}
+               onClick={() => setStatus('idle')}
                style={{ 
                  marginTop: '30px', 
                  padding: '12px 24px', 

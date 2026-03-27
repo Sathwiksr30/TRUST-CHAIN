@@ -1,351 +1,203 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+/**
+ * @title DigitalWill
+ * @dev A decentralized will system with flexible execution conditions (Time, Death, Age).
+ * Beneficiaries can claim their allocated funds after all conditions are met and the will is executed.
+ */
 contract DigitalWill {
-    uint16 public constant SHARE_SCALE = 10_000;
-
     struct WillData {
         address owner;
-        address executor;
-        string cid;
-        uint256 releaseTime;
-        uint256 fundedAmount;
-        uint16 totalShares;
+        string primaryBeneficiary;
+        string metadataCid;
+        
+        // Multi-Condition Support
+        bool requiresDeath;
+        bool requiresAge;
+        bool deathVerified;
+        uint256 releaseTime; 
+        uint256 minAge;      
+        uint256 ownerDOB;    
+        
         bool executed;
         bool revoked;
+        uint256 fundedAmountWei;
+        uint256 beneficiaryCount;
+        uint256 createdAt;
     }
 
-    struct BeneficiaryData {
-        uint16 shareBps;
-        bool exists;
+    struct Beneficiary {
+        address beneficiaryAddress;
+        uint256 shareBps; 
     }
 
-    mapping(bytes32 => WillData) private willById;
-    mapping(bytes32 => mapping(address => BeneficiaryData)) private beneficiaryByWill;
-    mapping(bytes32 => address[]) private beneficiaryListByWill;
+    struct NewWillParams {
+        string willId;
+        address primaryBeneficiary;
+        string metadataCid;
+        uint256 releaseTime;
+        bool requiresDeath;
+        uint256 minAge;
+        uint256 ownerDOB;
+    }
 
-    error WillAlreadyExists();
-    error WillNotFound();
-    error InvalidAddress();
-    error InvalidInput();
-    error NotWillOwner();
-    error NotAuthorized();
-    error WillRevoked();
-    error WillAlreadyExecuted();
-    error ConditionNotMet();
-    error NoFundsAvailable();
-    error TransferFailed();
-    error InvalidShares();
+    mapping(string => WillData) public wills;
+    mapping(string => Beneficiary[]) public willBeneficiaries;
+    mapping(string => mapping(address => uint256)) public claimableAmounts;
+    mapping(string => mapping(address => bool)) public hasClaimed;
+    mapping(string => string[]) public willNominees;
 
-    event WillCreated(
-        string willId,
-        address owner,
-        address beneficiary,
-        string cid,
-        uint256 releaseTime
-    );
+    // Events
+    event WillCreated(string indexed willId, address indexed owner, uint256 releaseTime);
+    event WillFunded(string indexed willId, uint256 amount);
+    event WillExecuted(string indexed willId, uint256 totalPayout);
+    event WillRevoked(string indexed willId);
+    event DeathVerified(string indexed willId);
+    event FundsClaimed(string indexed willId, address indexed beneficiary, uint256 amount);
 
-    event WillConfigured(
-        string willId,
-        address owner,
-        address executor,
-        string cid,
-        uint256 releaseTime
-    );
+    address public backendSigner;
 
-    event ExecutorUpdated(string willId, address executor);
-    event BeneficiariesUpdated(string willId, uint256 count, uint16 totalShares);
-    event WillFunded(string willId, address from, uint256 amount, uint256 totalFunded);
-    event InheritancePaid(string willId, address beneficiary, uint256 amount);
-    event WillRevokedAndRefunded(string willId, address owner, uint256 refundedAmount);
+    constructor() {
+        backendSigner = msg.sender;
+    }
 
-    event WillExecuted(
-        string willId,
-        address beneficiary
-    );
-
-    modifier onlyWillOwner(string memory willId) {
-        bytes32 willKey = _willKey(willId);
-        WillData storage w = willById[willKey];
-        if (w.owner == address(0)) revert WillNotFound();
-        if (w.owner != msg.sender) revert NotWillOwner();
+    modifier onlyOwner(string memory _willId) {
+        require(wills[_willId].owner == msg.sender, "Not the owner");
         _;
     }
 
-    function _willKey(string memory willId) private pure returns (bytes32) {
-        return keccak256(bytes(willId));
+    modifier onlyBackend() {
+        require(msg.sender == backendSigner, "Unauthorized: Only backend");
+        _;
     }
 
-    function _ensureUpdatable(WillData storage w) private view {
-        if (w.revoked) revert WillRevoked();
-        if (w.executed) revert WillAlreadyExecuted();
+    function setBackendSigner(address _newSigner) public onlyBackend {
+        backendSigner = _newSigner;
     }
 
-    function _createWillBase(
-        string memory willId,
-        address executor,
-        string memory cid,
-        uint256 releaseTime
-    ) private returns (bytes32 willKey) {
-        if (bytes(willId).length == 0 || bytes(cid).length == 0) revert InvalidInput();
-        if (executor == address(0)) revert InvalidAddress();
-        if (releaseTime < block.timestamp) revert InvalidInput();
+    function createWill(NewWillParams calldata p) public {
+        require(wills[p.willId].owner == address(0), "Will already exists");
 
-        willKey = _willKey(willId);
-        if (willById[willKey].owner != address(0)) revert WillAlreadyExists();
+        WillData storage w = wills[p.willId];
+        w.owner = msg.sender;
+        w.metadataCid = p.metadataCid;
+        w.requiresDeath = p.requiresDeath;
+        w.requiresAge = p.minAge > 0;
+        w.deathVerified = false;
+        w.releaseTime = p.releaseTime;
+        w.minAge = p.minAge;
+        w.ownerDOB = p.ownerDOB;
+        w.executed = false;
+        w.revoked = false;
+        w.fundedAmountWei = 0;
+        w.beneficiaryCount = 1;
+        w.createdAt = block.timestamp;
 
-        willById[willKey] = WillData({
-            owner: msg.sender,
-            executor: executor,
-            cid: cid,
-            releaseTime: releaseTime,
-            fundedAmount: 0,
-            totalShares: 0,
-            executed: false,
-            revoked: false
-        });
-    }
+        willBeneficiaries[p.willId].push(Beneficiary({
+            beneficiaryAddress: p.primaryBeneficiary,
+            shareBps: 10000 
+        }));
 
-    function _setBeneficiaries(
-        bytes32 willKey,
-        address[] memory beneficiaries,
-        uint16[] memory sharesBps
-    ) private {
-        if (beneficiaries.length == 0 || beneficiaries.length != sharesBps.length) {
-            revert InvalidInput();
-        }
-
-        uint256 existingCount = beneficiaryListByWill[willKey].length;
-        for (uint256 i = 0; i < existingCount; i++) {
-            address oldBeneficiary = beneficiaryListByWill[willKey][i];
-            delete beneficiaryByWill[willKey][oldBeneficiary];
-        }
-        delete beneficiaryListByWill[willKey];
-
-        uint256 runningTotal;
-        for (uint256 i = 0; i < beneficiaries.length; i++) {
-            address account = beneficiaries[i];
-            uint16 share = sharesBps[i];
-
-            if (account == address(0)) revert InvalidAddress();
-            if (share == 0) revert InvalidShares();
-            if (beneficiaryByWill[willKey][account].exists) revert InvalidInput();
-
-            beneficiaryByWill[willKey][account] = BeneficiaryData({
-                shareBps: share,
-                exists: true
-            });
-            beneficiaryListByWill[willKey].push(account);
-            runningTotal += share;
-        }
-
-        if (runningTotal != SHARE_SCALE) revert InvalidShares();
-        willById[willKey].totalShares = uint16(runningTotal);
-    }
-
-    function createWill(
-        string memory willId,
-        address beneficiary,
-        string memory cid,
-        uint256 releaseTime
-    ) public {
-        bytes32 willKey = _createWillBase(willId, msg.sender, cid, releaseTime);
-        address[] memory beneficiaries = new address[](1);
-        uint16[] memory shares = new uint16[](1);
-        beneficiaries[0] = beneficiary;
-        shares[0] = SHARE_SCALE;
-        _setBeneficiaries(willKey, beneficiaries, shares);
-
-        emit WillCreated(
-            willId,
-            msg.sender,
-            beneficiary,
-            cid,
-            releaseTime
-        );
-
-        emit WillConfigured(
-            willId,
-            msg.sender,
-            msg.sender,
-            cid,
-            releaseTime
-        );
-    }
-
-    function createWillWithExecutor(
-        string memory willId,
-        address executor,
-        string memory cid,
-        uint256 releaseTime
-    ) external {
-        _createWillBase(willId, executor, cid, releaseTime);
-        emit WillConfigured(willId, msg.sender, executor, cid, releaseTime);
-    }
-
-    function setExecutor(string memory willId, address executor) external onlyWillOwner(willId) {
-        if (executor == address(0)) revert InvalidAddress();
-
-        bytes32 willKey = _willKey(willId);
-        WillData storage w = willById[willKey];
-        _ensureUpdatable(w);
-
-        w.executor = executor;
-        emit ExecutorUpdated(willId, executor);
+        emit WillCreated(p.willId, msg.sender, p.releaseTime);
     }
 
     function setBeneficiaries(
-        string memory willId,
-        address[] calldata beneficiaries,
-        uint16[] calldata sharesBps
-    ) external onlyWillOwner(willId) {
-        bytes32 willKey = _willKey(willId);
-        WillData storage w = willById[willKey];
-        _ensureUpdatable(w);
+        string memory _willId,
+        address[] memory _addresses,
+        uint256[] memory _sharesBps
+    ) public onlyOwner(_willId) {
+        require(!wills[_willId].executed, "Already executed");
+        require(_addresses.length == _sharesBps.length, "Mismatched arrays");
 
-        _setBeneficiaries(willKey, beneficiaries, sharesBps);
-        emit BeneficiariesUpdated(willId, beneficiaries.length, w.totalShares);
+        delete willBeneficiaries[_willId];
+        uint256 totalBps = 0;
+        for (uint256 i = 0; i < _addresses.length; i++) {
+            willBeneficiaries[_willId].push(Beneficiary({
+                beneficiaryAddress: _addresses[i],
+                shareBps: _sharesBps[i]
+            }));
+            totalBps += _sharesBps[i];
+        }
+        require(totalBps == 10000, "Total must be 10000 bps (100%)");
+        wills[_willId].beneficiaryCount = _addresses.length;
     }
 
-    function fundWill(string memory willId) external payable onlyWillOwner(willId) {
-        if (msg.value == 0) revert InvalidInput();
+    function fundWill(string memory _willId) public payable {
+        require(wills[_willId].owner != address(0), "Will does not exist");
+        require(!wills[_willId].executed, "Already executed");
+        require(!wills[_willId].revoked, "Revoked");
 
-        bytes32 willKey = _willKey(willId);
-        WillData storage w = willById[willKey];
-        _ensureUpdatable(w);
-
-        w.fundedAmount += msg.value;
-        emit WillFunded(willId, msg.sender, msg.value, w.fundedAmount);
+        wills[_willId].fundedAmountWei += msg.value;
+        emit WillFunded(_willId, msg.value);
     }
 
-    function executeWill(string memory willId) public {
-        bytes32 willKey = _willKey(willId);
-        WillData storage w = willById[willKey];
-        if (w.owner == address(0)) revert WillNotFound();
-        if (w.revoked) revert WillRevoked();
-        if (w.executed) revert WillAlreadyExecuted();
-        if (block.timestamp < w.releaseTime) revert ConditionNotMet();
-        if (w.fundedAmount == 0) revert NoFundsAvailable();
+    function verifyDeath(string memory _willId) public onlyBackend {
+        require(wills[_willId].requiresDeath, "Death condition not required");
+        wills[_willId].deathVerified = true;
+        emit DeathVerified(_willId);
+    }
 
-        bool callerIsBeneficiary = beneficiaryByWill[willKey][msg.sender].exists;
-        if (msg.sender != w.owner && msg.sender != w.executor && !callerIsBeneficiary) {
-            revert NotAuthorized();
+    function canExecute(string memory _willId) public view returns (bool) {
+        WillData storage w = wills[_willId];
+        if (w.owner == address(0) || w.executed || w.revoked) return false;
+
+        bool timeOk = (w.releaseTime == 0) || (block.timestamp >= w.releaseTime);
+        bool deathOk = (!w.requiresDeath) || (w.deathVerified);
+        bool ageOk = true;
+        if (w.requiresAge) {
+            uint256 currentAge = (block.timestamp - w.ownerDOB) / 365 days;
+            ageOk = (currentAge >= w.minAge);
         }
 
-        address[] storage beneficiaries = beneficiaryListByWill[willKey];
-        if (beneficiaries.length == 0 || w.totalShares != SHARE_SCALE) revert InvalidShares();
+        return (timeOk && deathOk && ageOk);
+    }
+
+    function executeWill(string memory _willId) public {
+        require(canExecute(_willId), "Conditions not met yet");
+        
+        WillData storage w = wills[_willId];
+        uint256 totalFunds = w.fundedAmountWei;
+        require(totalFunds > 0, "No funds to distribute");
+
+        Beneficiary[] storage bens = willBeneficiaries[_willId];
+        for (uint256 i = 0; i < bens.length; i++) {
+            uint256 payout = (totalFunds * bens[i].shareBps) / 10000;
+            claimableAmounts[_willId][bens[i].beneficiaryAddress] += payout;
+        }
 
         w.executed = true;
+        w.fundedAmountWei = 0; 
 
-        uint256 totalAmount = w.fundedAmount;
-        w.fundedAmount = 0;
-        uint256 remaining = totalAmount;
-
-        for (uint256 i = 0; i < beneficiaries.length; i++) {
-            address account = beneficiaries[i];
-            uint256 payout;
-
-            if (i == beneficiaries.length - 1) {
-                payout = remaining;
-            } else {
-                uint16 share = beneficiaryByWill[willKey][account].shareBps;
-                payout = (totalAmount * share) / SHARE_SCALE;
-                remaining -= payout;
-            }
-
-            (bool sent, ) = payable(account).call{value: payout}("");
-            if (!sent) revert TransferFailed();
-
-            emit InheritancePaid(willId, account, payout);
-        }
-
-        emit WillExecuted(willId, msg.sender);
+        emit WillExecuted(_willId, totalFunds);
     }
 
-    function revokeWill(string memory willId) external onlyWillOwner(willId) {
-        bytes32 willKey = _willKey(willId);
-        WillData storage w = willById[willKey];
-        _ensureUpdatable(w);
+    function claimMyFunds(string memory _willId) public {
+        require(wills[_willId].executed, "Will not executed yet");
+        uint256 amount = claimableAmounts[_willId][msg.sender];
+        require(amount > 0, "No funds available for claim");
+        require(!hasClaimed[_willId][msg.sender], "Already claimed");
 
-        w.revoked = true;
+        hasClaimed[_willId][msg.sender] = true;
+        payable(msg.sender).transfer(amount);
 
-        uint256 refund = w.fundedAmount;
+        emit FundsClaimed(_willId, msg.sender, amount);
+    }
+
+    function revokeWill(string memory _willId) public onlyOwner(_willId) {
+        require(!wills[_willId].executed, "Already executed");
+        wills[_willId].revoked = true;
+        uint256 refund = wills[_willId].fundedAmountWei;
+        wills[_willId].fundedAmountWei = 0;
+        
         if (refund > 0) {
-            w.fundedAmount = 0;
-            (bool sent, ) = payable(w.owner).call{value: refund}("");
-            if (!sent) revert TransferFailed();
+            payable(msg.sender).transfer(refund);
         }
-
-        emit WillRevokedAndRefunded(willId, w.owner, refund);
+        
+        emit WillRevoked(_willId);
     }
 
-    function getWill(
-        string memory willId
-    ) external view returns (
-        address owner,
-        address executor,
-        string memory cid,
-        uint256 releaseTime,
-        uint256 fundedAmount,
-        uint16 totalShares,
-        bool executed,
-        bool revoked,
-        uint256 beneficiaryCount
-    ) {
-        bytes32 willKey = _willKey(willId);
-        WillData storage w = willById[willKey];
-        if (w.owner == address(0)) revert WillNotFound();
-
-        return (
-            w.owner,
-            w.executor,
-            w.cid,
-            w.releaseTime,
-            w.fundedAmount,
-            w.totalShares,
-            w.executed,
-            w.revoked,
-            beneficiaryListByWill[willKey].length
-        );
-    }
-
-    function getBeneficiaries(
-        string memory willId
-    ) external view returns (address[] memory beneficiaries, uint16[] memory sharesBps) {
-        bytes32 willKey = _willKey(willId);
-        if (willById[willKey].owner == address(0)) revert WillNotFound();
-
-        address[] memory list = beneficiaryListByWill[willKey];
-        uint16[] memory shares = new uint16[](list.length);
-        for (uint256 i = 0; i < list.length; i++) {
-            shares[i] = beneficiaryByWill[willKey][list[i]].shareBps;
-        }
-
-        return (list, shares);
-    }
-
-    function wills(
-        string memory willId
-    ) external view returns (
-        address owner,
-        address beneficiary,
-        string memory cid,
-        uint256 releaseTime,
-        bool executed
-    ) {
-        bytes32 willKey = _willKey(willId);
-        WillData storage w = willById[willKey];
-        if (w.owner == address(0)) revert WillNotFound();
-
-        address firstBeneficiary = address(0);
-        if (beneficiaryListByWill[willKey].length > 0) {
-            firstBeneficiary = beneficiaryListByWill[willKey][0];
-        }
-
-        return (w.owner, firstBeneficiary, w.cid, w.releaseTime, w.executed);
-    }
-
-    receive() external payable {
-        revert("Use fundWill");
+    function getBeneficiaries(string memory _willId) public view returns (Beneficiary[] memory) {
+        return willBeneficiaries[_willId];
     }
 }

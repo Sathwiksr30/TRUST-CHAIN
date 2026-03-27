@@ -1,0 +1,51 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-03-27T01:01:57+05:30",
+  "id": "WILL-1774553517247",
+  "name": "dsvnds",
+  "description": "Execute after 27 March 2026 at 01:05:00 am",
+  "testatorName": "eewr",
+  "testatorGuardianName": "fvdf",
+  "testatorAge": "83",
+  "testatorAddress": "sdff",
+  "religion": "fvdf",
+  "dob": "2005-08-02",
+  "place": "fvdvdf",
+  "testatorSignature": "hjbhj",
+  "witnesses": [
+    {
+      "name": "dscds",
+      "address": "dscdsdcdc",
+      "signature": "dsvvds"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Time",
+      "value": "2026-03-27T01:05"
+    }
+  ],
+  "owner": "0xe73f36a707b1e89cec0a937ce4c86d3629df57b1",
+  "beneficiaries": [
+    {
+      "name": "dsdss",
+      "email": "23r21a6675@mlrit.ac.in",
+      "walletAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266 ",
+      "share": 100
+    }
+  ],
+  "nominees": [],
+  "assets": [
+    {
+      "type": "Insurance Policies",
+      "description": "dcdscs",
+      "value": "85"
+    }
+  ]
+}

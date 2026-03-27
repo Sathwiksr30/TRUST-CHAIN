@@ -4,9 +4,10 @@ import { ethers } from 'ethers';
 import './CreateWill.css';
 import { formatIndiaDateTime, toIndiaDateString, toIndiaIsoString } from '../utils/timezone';
 import { getStoredDocuments, syncWillStatuses } from '../utils/willStatusSync';
-import contractABI from "../abi/DigitalWill.json";
+import contractABI from '../abi/DigitalWill.json';
 
-const CONTRACT_ADDRESS = "0x009B1e24Eb61B7B63DaFCC4bbDE86B17Ded48048";
+const CONTRACT_ADDRESS = process.env.REACT_APP_DIGITAL_WILL_CONTRACT_ADDRESS || "0x6C286aAFC57b374C4BDD0a84371c9551d4778914";
+const DIGITAL_WILL_ABI = Array.isArray(contractABI) ? contractABI : (contractABI?.abi || []);
 
 const API_BASE = (
   process.env.REACT_APP_API_BASE_URL ||
@@ -152,14 +153,6 @@ function validateWillPayload(formData) {
     }
   }
 
-  const executorEmail = String(formData.executorEmail || '').trim();
-  if (!executorEmail) {
-    return 'Executor email is required.';
-  }
-  if (!EMAIL_REGEX.test(executorEmail)) {
-    return 'Executor email is invalid.';
-  }
-
   if (!Array.isArray(formData.beneficiaries) || formData.beneficiaries.length === 0) {
     return 'Add at least one beneficiary.';
   }
@@ -237,92 +230,43 @@ function validateWillPayload(formData) {
 
 async function createWillOnChain(willData, setProgress) {
   if (!window.ethereum) {
-    alert("MetaMask not found. Please install MetaMask to use TrustChain.");
-    throw new Error("MetaMask not found");
+    throw new Error('MetaMask not found. Please install MetaMask.');
   }
 
   const provider = new ethers.BrowserProvider(window.ethereum);
-  
-  // Verify user is on Sepolia (11155111)
   const network = await provider.getNetwork();
   if (network.chainId !== 11155111n) {
-    try {
-      await window.ethereum.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: '0xaa36a7' }], // 11155111 in hex
-      });
-    } catch (switchError) {
-      alert("Please switch your MetaMask network to Sepolia to continue.");
-      throw new Error("Invalid Network");
-    }
+    await window.ethereum.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: '0xaa36a7' }],
+    });
   }
 
   const signer = await provider.getSigner();
-  const contract = new ethers.Contract(
-    CONTRACT_ADDRESS,
-    contractABI.abi,
-    signer
-  );
+  const contract = new ethers.Contract(CONTRACT_ADDRESS, DIGITAL_WILL_ABI, signer);
 
-  if (setProgress) setProgress("2/4: Configuring Will on Blockchain...");
-  console.log(`[BLOCKCHAIN] Creating will ${willData.willId} on-chain...`);
+  const primaryBeneficiary = ethers.getAddress(String(willData.primaryBeneficiary || '').trim());
 
-  // 1️⃣ Step 3.1: Create Will (0 ETH)
-  // Registers the primary beneficiary
-  const primaryBeneficiary = String(willData.primaryBeneficiary || "").trim();
-  const createTx = await contract.createWill(
-    willData.willId,
+  if (setProgress) setProgress('2/3: Confirm MetaMask transactions...');
+
+  const createTx = await contract.createWill({
+    willId: willData.willId,
     primaryBeneficiary,
-    willData.cid,
-    willData.releaseTime,
-    { gasLimit: 300000 } 
-  );
+    metadataCid: willData.cid,
+    releaseTime: willData.releaseTime || 0,
+    requiresDeath: !!willData.requiresDeath,
+    minAge: willData.minAge || 0,
+    ownerDOB: willData.ownerDOB || 0,
+  }, { gasLimit: 400000 });
   await createTx.wait();
-  console.log("✅ Will Created on-chain");
 
-  // 2️⃣ Step 3.2: Set ALL Beneficiaries if there are multiple
-  if (Array.isArray(willData.beneficiaries) && willData.beneficiaries.length > 0) {
-    if (setProgress) setProgress("2.5/4: Registering All Beneficiaries...");
-    console.log(`[BLOCKCHAIN] Registering ${willData.beneficiaries.length} beneficiaries...`);
-    
-    const addresses = willData.beneficiaries.map(b => b.walletAddress);
-    // Convert 0-100% to Basis Points (0-10000)
-    const sharesBps = willData.beneficiaries.map(b => Math.round(Number(b.share) * 100));
-    
-    try {
-      const setBenTx = await contract.setBeneficiaries(willData.willId, addresses, sharesBps, { gasLimit: 200000 });
-      await setBenTx.wait();
-      console.log("✅ Beneficiaries Registered on-chain");
-    } catch (benErr) {
-      console.error("Failed to set multiple beneficiaries on-chain:", benErr);
-      // We don't necessarily throw here if it's just a secondary step, but it might be critical for access
-    }
-  }
-
-  // 3️⃣ Step 3.3: Set Executor if provided
-  if (willData.executorAddress && willData.executorAddress !== ethers.ZeroAddress) {
-    if (setProgress) setProgress("2.8/4: Registering Executor...");
-    console.log(`[BLOCKCHAIN] Registering executor ${willData.executorAddress}...`);
-    try {
-      const setExTx = await contract.setExecutor(willData.willId, willData.executorAddress, { gasLimit: 100000 });
-      await setExTx.wait();
-      console.log("✅ Executor Registered on-chain");
-    } catch (exErr) {
-      console.error("Failed to set executor on-chain:", exErr);
-    }
-  }
-
-  if (setProgress) setProgress("3/4: Confirming Execution Funding (0.0003 ETH)...");
-  
-  // 4️⃣ Step 3.4: Fund Will (0.0003 ETH)
   const fundTx = await contract.fundWill(willData.willId, {
-    value: ethers.parseEther("0.0003"),
-    gasLimit: 150000 
+    value: ethers.parseEther('0.0003'),
+    gasLimit: 200000,
   });
   await fundTx.wait();
-  console.log("✅ Will Funded on-chain");
-  
-  if (setProgress) setProgress("4/4: Finalizing...");
+
+  return { createTxHash: createTx.hash, fundTxHash: fundTx.hash };
 }
 
 function CreateWill({ onNavigate }) {
@@ -343,8 +287,6 @@ function CreateWill({ onNavigate }) {
     testatorSignature: '',
     witnesses: [{ name: '', address: '', signature: '' }],
     conditions: [],
-    executorName: '',
-    executorEmail: '',
     beneficiaries: [],
     nominees: [],
     assets: []
@@ -401,7 +343,6 @@ function CreateWill({ onNavigate }) {
   const steps = [
     { name: 'Initial', component: InitialView },
     { name: 'Basic Info', component: BasicInfo },
-    { name: 'Executor', component: Executor },
     { name: 'Beneficiaries', component: Beneficiaries },
     { name: 'Assets', component: Assets },
     { name: 'Witness', component: WitnessDetails },
@@ -552,20 +493,39 @@ function CreateWill({ onNavigate }) {
       owner: localStorage.getItem('trustchain_user') || 'guest',
       status: 'Pending',
       uploadDate: toIndiaDateString(),
-      executor: formData.executorName,
-      executorEmail: formData.executorEmail,
-      beneficiaries: formData.beneficiaries,
+      beneficiaries: (formData.beneficiaries || []).map((b) => (typeof b === 'string' ? b.trim() : b)),
       nominees: formData.nominees,
       assets: formData.assets,
       amountEth: '0.01',
       createdAt: toIndiaIsoString(),
-      ...(releaseTime ? { releaseTime } : {})
+      ...(releaseTime ? { releaseTime } : {}),
+      // Flattened flags for blockchain struct conversion
+      requiresDeath: !!deathCondition,
+      minAge: ageCondition ? Number(ageFields.targetAge) : 0,
+      ownerDOB: ageReleaseTime ? ageReleaseTime - (Number(ageFields.targetAge) * 365.25 * 24 * 3600) : 0 // rough or pass direct
     };
+
+    // Refined ownerDOB calculation from age
+    if (ageCondition && ageFields.dob) {
+      const dobDate = new Date(`${ageFields.dob}T00:00:00+05:30`);
+      if (!isNaN(dobDate.getTime())) {
+        newWill.ownerDOB = Math.floor(dobDate.getTime() / 1000);
+      }
+    }
+
 
     setCreating(true);
     setProgressMessage("1/3: Generating Secure Document (IPFS)...");
     try {
-      // 1. Backend: Upload to IPFS / Generate metadata
+      const confirmCreate = window.confirm(
+        'This will request MetaMask confirmation and deduct 0.0003 ETH from your connected wallet. Continue?'
+      );
+      if (!confirmCreate) {
+        setCreating(false);
+        return;
+      }
+
+      // Step 1: backend metadata only (no backend wallet deduction)
       const res = await axios.post(
         `${API_BASE}/create-will`,
         { ...newWill, ipfsOnly: true },
@@ -575,15 +535,26 @@ function CreateWill({ onNavigate }) {
       const resData = res.data;
       const cid = resData.cid || resData.metadataCid;
 
-      // 2. Blockchain: MetaMask transaction
-      await createWillOnChain({
+      // Step 2: user MetaMask creates and funds will on-chain
+      const txResult = await createWillOnChain({
         willId: resData.willId,
-        primaryBeneficiary: (formData.beneficiaries[0].walletAddress || "").trim(),
-        beneficiaries: formData.beneficiaries,
-        executorAddress: (formData.executorWallet || "0x0000000000000000000000000000000000000000"),
-        cid: cid,
-        releaseTime: resData.releaseTime || 0
+        primaryBeneficiary: (formData.beneficiaries[0].walletAddress || '').trim(),
+        cid,
+        releaseTime: resData.releaseTime || 0,
+        requiresDeath: newWill.requiresDeath,
+        minAge: newWill.minAge,
+        ownerDOB: newWill.ownerDOB,
       }, setProgressMessage);
+
+      setProgressMessage('3/3: Sending stakeholder emails...');
+
+      // Step 3: trigger mail workflow after successful MetaMask tx
+      const notifyResponse = await axios.post(
+        `${API_BASE}/will/${encodeURIComponent(resData.willId)}/notify-creation`,
+        {},
+        { headers: { 'x-api-key': API_KEY } }
+      );
+      const notifyData = notifyResponse?.data || {};
 
       const blockchain = {
 
@@ -591,7 +562,9 @@ function CreateWill({ onNavigate }) {
         revoked: false,
         ownerAddress: 'MetaMask Wallet',
         metadataCid: cid,
-        contractAddress: CONTRACT_ADDRESS
+        contractAddress: CONTRACT_ADDRESS,
+        createWillTxHash: txResult?.createTxHash,
+        fundWillTxHash: txResult?.fundTxHash,
       };
       const createdWill = {
         ...newWill,
@@ -604,31 +577,9 @@ function CreateWill({ onNavigate }) {
       const existingDocs = JSON.parse(localStorage.getItem('trustchain_documents') || '[]');
       localStorage.setItem('trustchain_documents', JSON.stringify([...existingDocs, createdWill]));
 
-      // 3. Trigger backend notification (Emails) AFTER successful blockchain confirmation
-      try {
-        const notifyResponse = await axios.post(
-          `${API_BASE}/will/${encodeURIComponent(resData.willId)}/notify-creation`,
-          {},
-          { headers: { 'x-api-key': API_KEY } }
-        );
-
-        const notifyData = notifyResponse?.data || {};
-        const notifySucceeded =
-          notifyData.success === true ||
-          notifyData.status === 'SUCCESS' ||
-          (notifyData.emails && Number(notifyData.emails.sent || 0) > 0);
-
-        if (!notifySucceeded) {
-          throw new Error(notifyData.message || 'Post-creation notification endpoint did not confirm any sent emails.');
-        }
-
-        console.log("Successfully triggered post-creation notifications.", notifyData);
-      } catch (notifyErr) {
-        console.error("Failed to trigger post-creation notifications:", notifyErr.message);
-        alert(`Will created on-chain, but email notification failed: ${notifyErr.message}`);
-      }
-
-      alert('Digital Will created successfully! Your transaction was confirmed on the blockchain.');
+      const sentFirst = Number(notifyData?.emails?.firstMail?.sent || notifyData?.emails?.sent || 0);
+      const sentSecond = Number(notifyData?.emails?.secondMail?.sent || 0);
+      alert(`Digital Will has been successfully created on the blockchain. Emails sent: ${sentFirst + sentSecond}.`);
       setCurrentStep(0);
       setFormData({
         willName: '',
@@ -642,9 +593,6 @@ function CreateWill({ onNavigate }) {
         testatorSignature: '',
         witnesses: [{ name: '', address: '', signature: '' }],
         conditions: [],
-        executorName: '',
-        executorEmail: '',
-        executorWallet: '',
         beneficiaries: [],
         nominees: [],
         assets: []
@@ -661,8 +609,21 @@ function CreateWill({ onNavigate }) {
         errorMessage = `❌ Backend Error: ${err.response.data.message}`;
       } else if (err?.response?.data?.error) {
         errorMessage = `❌ Backend Error: ${err.response.data.error}`;
-      } else if (err?.info?.error?.message || err?.error?.message || err?.message) {
-        errorMessage = `❌ Blockchain Error: ${err?.info?.error?.message || err?.error?.message || err?.message}`;
+      } else if (err?.revert?.name) {
+        errorMessage = `❌ Contract Error: ${err.revert.name}`;
+      } else if (err?.reason) {
+        errorMessage = `❌ Blockchain Error: ${err.reason}`;
+      } else if (err?.shortMessage) {
+        errorMessage = `❌ Blockchain Error: ${err.shortMessage}`;
+      } else {
+        // Attempt to find or parse the revert reason from the error object
+        const reason = err?.reason || err?.info?.error?.message || err?.error?.message || err?.message || err;
+        const detail = err?.data || err?.error?.data || ""; 
+        
+        errorMessage = `❌ Blockchain Error: ${typeof reason === 'string' ? reason : JSON.stringify(reason)}`;
+        if (detail) {
+          errorMessage += `\nDetail: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`;
+        }
       }
 
       alert(errorMessage);
@@ -977,61 +938,6 @@ function WitnessDetails({ formData, onAddWitness, onRemoveWitness, onUpdateWitne
   );
 }
 
-function Executor({ formData, onInputChange, onNext, onPrevious }) {
-  return (
-    <div className="will-container">
-      <div className="header-section">
-        <h2>Executor</h2>
-      </div>
-
-      <div className="will-form">
-        <div className="form-section">
-          <h3>Assign Executor</h3>
-          <p>The executor will manage the distribution of your digital assets.</p>
-
-          <div className="form-group">
-            <label htmlFor="executorName">Executor Name</label>
-            <input
-              type="text"
-              id="executorName"
-              placeholder="Full legal name"
-              value={formData.executorName}
-              onChange={(e) => onInputChange('executorName', e.target.value)}
-            />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="executorEmail">Executor Email</label>
-            <input
-              type="email"
-              id="executorEmail"
-              placeholder="email@example.com"
-              value={formData.executorEmail}
-              onChange={(e) => onInputChange('executorEmail', e.target.value)}
-            />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="executorWallet">Executor Wallet Address (for on-chain approval)</label>
-            <input
-              type="text"
-              id="executorWallet"
-              placeholder="0x..."
-              value={formData.executorWallet || ''}
-              onChange={(e) => onInputChange('executorWallet', e.target.value)}
-            />
-            <small>Executor wallet is required if they need to approve the asset release on-chain.</small>
-          </div>
-        </div>
-
-        <div className="form-actions">
-          <button className="previous-btn" onClick={onPrevious}>Previous</button>
-          <button className="continue-btn" onClick={onNext}>Continue</button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function Beneficiaries({ formData, onAddBeneficiary, onRemoveBeneficiary, onAddNominee, onRemoveNominee, onNext, onPrevious }) {
   const [newBeneficiary, setNewBeneficiary] = useState({ name: '', email: '', walletAddress: '', share: '' });
@@ -1376,11 +1282,6 @@ function Review({ formData, creating, onPrevious, onCreateWill }) {
             )}
           </div>
 
-          <div className="review-item">
-            <strong>Executor</strong>
-            <span>{formData.executorName || 'Not specified'}</span>
-            {formData.executorWallet && <span>Wallet: {formData.executorWallet}</span>}
-          </div>
 
           <div className="review-item">
             <strong>Beneficiaries</strong>
@@ -1542,7 +1443,7 @@ function ConditionFields({ condition, onChange }) {
         <i className="fas fa-dove"></i>
         <div>
           <strong>Death Verification</strong>
-          <p>This will executes upon verified proof of death submitted by the executor. All beneficiaries are notified immediately by email.</p>
+          <p>This will executes upon verified proof of death. All beneficiaries and nominees are notified immediately by email.</p>
         </div>
       </div>
     );

@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-03-27T11:58:56+05:30",
+  "id": "WILL-1774592930942",
+  "name": "sai",
+  "description": "Execute upon verified death",
+  "testatorName": "sathwik",
+  "testatorGuardianName": "asfadfadf",
+  "testatorAge": "45",
+  "testatorAddress": "hyderabad",
+  "religion": "ascasfasd",
+  "dob": "2005-08-30",
+  "place": "aasfas",
+  "testatorSignature": "rakshitha",
+  "witnesses": [
+    {
+      "name": "shalini",
+      "address": "hyd",
+      "signature": "shalini"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Death",
+      "value": ""
+    }
+  ],
+  "owner": "0xe73f36a707b1e89cec0a937ce4c86d3629df57b1",
+  "beneficiaries": [
+    {
+      "name": "sai",
+      "email": "challasathwikreddy55@gmail.com",
+      "walletAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+      "share": 100
+    }
+  ],
+  "nominees": [
+    {
+      "name": "adya",
+      "email": "23r21a6675@mlrit.ac.in",
+      "relation": "siso",
+      "walletAddress": ""
+    }
+  ],
+  "assets": [
+    {
+      "type": "Cryptocurrency",
+      "description": "hi",
+      "value": "78451"
+    }
+  ]
+}

@@ -49,12 +49,7 @@ field('Will Name', '________________________');
 field('Execution Condition', '________________________');
 para('(Time-Based / Age-Based / Death Verification / Multiple Conditions)');
 
-section('2. APPOINTMENT OF EXECUTOR');
-para('I hereby appoint Shri/Smt ________________________ (Email: ________________________), as the Executor of this Will, who shall be responsible for managing and distributing my assets as per my instructions.');
-field('Blockchain Wallet Address of Executor', '________________________');
-para('In case the above executor is unable or unwilling to act, an alternate executor may be appointed as per legal provisions.');
-
-section('3. BENEFICIARIES');
+section('2. BENEFICIARIES');
 para('I hereby declare the following beneficiaries who shall receive my assets:');
 resetX();
 doc.font('Times-Bold').fontSize(12).text('Beneficiary 1', leftX, doc.y, { lineGap });
@@ -65,7 +60,7 @@ field('Share (%)', '________________________', 16);
 field('Wallet Address', '________________________', 16);
 para('(Additional beneficiaries may be added similarly)');
 
-section('4. ASSET DETAILS');
+section('3. ASSET DETAILS');
 para('I declare that I am the sole and absolute owner of the following assets:');
 resetX();
 doc.font('Times-Bold').fontSize(12).text('Asset 1', leftX, doc.y, { lineGap });
@@ -75,29 +70,29 @@ field('Description', '________________________', 16);
 field('Estimated Value', '________________________', 16);
 para('(All assets added through the system are included as part of this Will)');
 
-section('5. DISTRIBUTION OF ASSETS');
+section('4. DISTRIBUTION OF ASSETS');
 para('All the above-mentioned assets shall be distributed among the beneficiaries as per their defined share percentages.');
-para('The Executor shall ensure that:');
+para('Distribution processing shall ensure that:');
 para('- Assets are distributed fairly according to the defined shares');
 para('- Blockchain-based assets are transferred using the provided wallet addresses');
 para('- Legal compliance is maintained during execution');
 
-section('6. EXECUTION CONDITIONS');
+section('5. EXECUTION CONDITIONS');
 para('This Will shall come into effect based on the following condition:');
 para('- Condition 1: ________________________ - ________________________');
 para('(Example: Upon death verification / On a specific date / When beneficiary reaches a certain age / Multiple conditions)');
 
-section('7. DECLARATION OF OWNERSHIP');
+section('6. DECLARATION OF OWNERSHIP');
 para('All assets listed in this Will are self-acquired and owned by me. No other person has any right, claim, or interest in these assets.');
 
-section('8. DIGITAL ACCESS & AUTHORIZATION');
-para('I authorize the Executor to access and manage my digital and financial assets, including blockchain-based assets, using the credentials and permissions provided securely.');
+section('7. DIGITAL ACCESS & AUTHORIZATION');
+para('I authorize trusted stakeholders to access and manage my digital and financial assets, including blockchain-based assets, using the credentials and permissions provided securely.');
 
-section('9. SIGNATURE');
+section('8. SIGNATURE');
 para('IN WITNESS WHEREOF, I have hereunto set my hand on this ________ day of ____________, 20__ at ________________________.');
 field('Signature of Testator', '________________________', 0);
 
-section('10. WITNESSES');
+section('9. WITNESSES');
 para('We hereby attest that the Testator has signed this Will in our presence and has declared it as their last Will. The Testator is of sound mind and has executed this document voluntarily.');
 resetX();
 doc.font('Times-Bold').fontSize(12).text('Witness 1', leftX, doc.y, { lineGap });

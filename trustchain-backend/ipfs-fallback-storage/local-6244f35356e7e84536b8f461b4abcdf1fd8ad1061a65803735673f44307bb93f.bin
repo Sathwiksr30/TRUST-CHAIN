@@ -1,0 +1,51 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-03-27T00:02:25+05:30",
+  "id": "WILL-1774549945321",
+  "name": "tranasfer of house ",
+  "description": "Execute after 27 March 2026 at 12:05:00 am",
+  "testatorName": "rakshitha",
+  "testatorGuardianName": "naredla Sudhakar",
+  "testatorAge": "22",
+  "testatorAddress": "hyderabad",
+  "religion": "hindu",
+  "dob": "2004-11-02",
+  "place": "hyderabad",
+  "testatorSignature": "rakshitha",
+  "witnesses": [
+    {
+      "name": "shalini",
+      "address": "hyd",
+      "signature": "shalini"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Time",
+      "value": "2026-03-27T00:05"
+    }
+  ],
+  "owner": "0xe73f36a707b1e89cec0a937ce4c86d3629df57b1",
+  "beneficiaries": [
+    {
+      "name": "sathwik",
+      "email": "challasathwikreddy55@gmail.com",
+      "walletAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266 ",
+      "share": 100
+    }
+  ],
+  "nominees": [],
+  "assets": [
+    {
+      "type": "Investments",
+      "description": "incoin",
+      "value": "784512"
+    }
+  ]
+}

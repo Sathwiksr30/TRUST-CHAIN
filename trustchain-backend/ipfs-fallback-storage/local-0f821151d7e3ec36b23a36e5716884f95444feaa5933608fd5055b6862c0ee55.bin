@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-03-27T11:50:16+05:30",
+  "id": "WILL-1774592414587",
+  "name": "tranasfer of house ",
+  "description": "Execute upon verified death",
+  "testatorName": "rakshitha",
+  "testatorGuardianName": "naredla Sudhakar",
+  "testatorAge": "52",
+  "testatorAddress": "hyderabad",
+  "religion": "hindu",
+  "dob": "2004-11-02",
+  "place": "hyderabad",
+  "testatorSignature": "rakshitha",
+  "witnesses": [
+    {
+      "name": "shalini",
+      "address": "hyd",
+      "signature": "shalini"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Death",
+      "value": ""
+    }
+  ],
+  "owner": "0xe73f36a707b1e89cec0a937ce4c86d3629df57b1",
+  "beneficiaries": [
+    {
+      "name": "sai",
+      "email": "challasathwikreddy55@gmail.com",
+      "walletAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266 ",
+      "share": 100
+    }
+  ],
+  "nominees": [
+    {
+      "name": "adya",
+      "email": "23r21a6675@mlrit.ac.in",
+      "relation": "siso",
+      "walletAddress": ""
+    }
+  ],
+  "assets": [
+    {
+      "type": "Personal Property",
+      "description": "incoin",
+      "value": "1000000"
+    }
+  ]
+}

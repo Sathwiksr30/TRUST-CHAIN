@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-03-27T00:43:32+05:30",
+  "id": "WILL-1774552412912",
+  "name": "sai",
+  "description": "Execute upon verified death",
+  "testatorName": "rakshitha",
+  "testatorGuardianName": "asfadfadf",
+  "testatorAge": "20",
+  "testatorAddress": "ascasdasd",
+  "religion": "ascasfasd",
+  "dob": "2000-04-02",
+  "place": "hyderabad",
+  "testatorSignature": "casdasd",
+  "witnesses": [
+    {
+      "name": "aasdasas",
+      "address": "asfas",
+      "signature": "asfasd"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Death",
+      "value": ""
+    }
+  ],
+  "owner": "0xe73f36a707b1e89cec0a937ce4c86d3629df57b1",
+  "beneficiaries": [
+    {
+      "name": "sai",
+      "email": "challasathwikreddy55@gmail.com",
+      "walletAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266 ",
+      "share": 100
+    }
+  ],
+  "nominees": [
+    {
+      "name": "sada",
+      "email": "23r21a6675@mlrit.ac.in",
+      "relation": "bro",
+      "walletAddress": ""
+    }
+  ],
+  "assets": [
+    {
+      "type": "Personal Property",
+      "description": "cdsc",
+      "value": "7854"
+    }
+  ]
+}

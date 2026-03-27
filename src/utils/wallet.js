@@ -6,6 +6,8 @@ const HARDHAT_CHAIN_ID_HEX = "0x7a69";   // 31337
 
 const TARGET_CHAIN_ID_HEX = IS_PRODUCTION ? SEPOLIA_CHAIN_ID_HEX : HARDHAT_CHAIN_ID_HEX;
 
+let connectInFlight = null;
+
 const NETWORK_PARAMS = IS_PRODUCTION
   ? {
       chainId: SEPOLIA_CHAIN_ID_HEX,
@@ -31,14 +33,16 @@ export function getMetaMaskProvider() {
   const ethereum = window.ethereum;
   if (!ethereum) return null;
 
-  if (ethereum.isMetaMask) return ethereum;
-
   if (Array.isArray(ethereum.providers)) {
-    const mmProvider = ethereum.providers.find((provider) => provider?.isMetaMask);
+    const mmProvider = ethereum.providers.find(
+      (provider) => provider?.isMetaMask && typeof provider?.request === "function"
+    );
     return mmProvider || null;
   }
 
-  return ethereum;
+  if (ethereum.isMetaMask && typeof ethereum.request === "function") return ethereum;
+
+  return null;
 }
 
 export function isMobileDevice() {
@@ -98,15 +102,63 @@ export async function ensureHardhatNetwork() {
 }
 
 export async function connectMetaMask({ requireHardhat = true } = {}) {
+  if (connectInFlight) {
+    return connectInFlight;
+  }
+
+  connectInFlight = (async () => {
   const provider = getMetaMaskProvider();
 
   if (!provider) {
     throw new Error("MetaMask is not installed. Please install it in your browser.");
   }
 
+  // Helpful early check: user may have MetaMask installed but still locked.
+  try {
+    if (provider?._metamask?.isUnlocked) {
+      const unlocked = await provider._metamask.isUnlocked();
+      if (!unlocked) {
+        throw new Error("MetaMask is locked. Please unlock it and try again.");
+      }
+    }
+  } catch (error) {
+    if (String(error?.message || "").includes("locked")) {
+      throw error;
+    }
+    // Ignore non-critical unlock probe errors.
+  }
 
+  let accounts = [];
+  if (provider.selectedAddress) {
+    accounts = [provider.selectedAddress];
+  }
+  try {
+    // Reuse already authorized account when available to avoid repeated connect prompts.
+    accounts = await provider.request({ method: "eth_accounts" });
+  } catch {
+    accounts = [];
+  }
 
-  const accounts = await provider.request({ method: "eth_requestAccounts" });
+  if (!Array.isArray(accounts) || accounts.length === 0) {
+    try {
+      accounts = await provider.request({ method: "eth_requestAccounts" });
+    } catch (error) {
+      if (error?.code === -32002) {
+        throw new Error("MetaMask already has a pending connection request. Open MetaMask and approve/reject it first.");
+      }
+      if (error?.code === 4001) {
+        throw new Error("Connection request rejected in MetaMask.");
+      }
+      const msg = String(error?.message || "").toLowerCase();
+      if (msg.includes("failed to connect to metamask") || msg.includes("connection") || msg.includes("disconnected")) {
+        throw new Error(
+          "MetaMask connection failed. Open MetaMask, unlock it, and retry the connection."
+        );
+      }
+      throw error;
+    }
+  }
+
   const walletAddress = accounts?.[0] || null;
 
   if (!walletAddress) {
@@ -119,6 +171,13 @@ export async function connectMetaMask({ requireHardhat = true } = {}) {
 
   persistWalletSession(walletAddress);
   return walletAddress;
+  })();
+
+  try {
+    return await connectInFlight;
+  } finally {
+    connectInFlight = null;
+  }
 }
 
 export async function getCurrentMetaMaskAccount() {

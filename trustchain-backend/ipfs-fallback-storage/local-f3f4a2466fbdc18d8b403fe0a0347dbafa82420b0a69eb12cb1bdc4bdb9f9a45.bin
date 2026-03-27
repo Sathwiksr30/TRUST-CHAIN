@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-03-27T00:41:04+05:30",
+  "id": "WILL-1774552264325",
+  "name": "sathwik",
+  "description": "Execute upon verified death",
+  "testatorName": "rakshitha",
+  "testatorGuardianName": "asfadfadf",
+  "testatorAge": "25",
+  "testatorAddress": "hyderabad",
+  "religion": "aas",
+  "dob": "2004-11-02",
+  "place": "sadassad",
+  "testatorSignature": "casdasd",
+  "witnesses": [
+    {
+      "name": "aasdasas",
+      "address": "asfas",
+      "signature": "shalini"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Death",
+      "value": ""
+    }
+  ],
+  "owner": "0xe73f36a707b1e89cec0a937ce4c86d3629df57b1",
+  "beneficiaries": [
+    {
+      "name": "sai",
+      "email": "challasathwikreddy55@gmail.com",
+      "walletAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266 ",
+      "share": 100
+    }
+  ],
+  "nominees": [
+    {
+      "name": "ddsds",
+      "email": "23r21a6675@mlrit.ac.in",
+      "relation": "siso",
+      "walletAddress": ""
+    }
+  ],
+  "assets": [
+    {
+      "type": "Collectibles",
+      "description": "dd",
+      "value": "441"
+    }
+  ]
+}

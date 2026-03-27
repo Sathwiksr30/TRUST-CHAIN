@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-03-27T11:28:18+05:30",
+  "id": "WILL-1774591097611",
+  "name": "sai",
+  "description": "Execute upon verified death",
+  "testatorName": "asasas",
+  "testatorGuardianName": "sdcds",
+  "testatorAge": "25",
+  "testatorAddress": "hyderabad",
+  "religion": "hindu",
+  "dob": "2005-08-30",
+  "place": "sadassad",
+  "testatorSignature": "rakshitha",
+  "witnesses": [
+    {
+      "name": "shalini",
+      "address": "asfas",
+      "signature": "navaroj"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Death",
+      "value": ""
+    }
+  ],
+  "owner": "0xe73f36a707b1e89cec0a937ce4c86d3629df57b1",
+  "beneficiaries": [
+    {
+      "name": "sai",
+      "email": "challasathwikreddy55@gmail.com",
+      "walletAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+      "share": 100
+    }
+  ],
+  "nominees": [
+    {
+      "name": "sai",
+      "email": "23r21a6675@mlrit.ac.in",
+      "relation": "siso",
+      "walletAddress": ""
+    }
+  ],
+  "assets": [
+    {
+      "type": "Business Interests",
+      "description": "scc",
+      "value": "84512485"
+    }
+  ]
+}
