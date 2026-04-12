@@ -62,10 +62,15 @@ function ReleaseWill({ willId: propWillId, onNavigate }) {
       } else {
         throw new Error(response.data.message || "Verification failed.");
       }
-    } catch (err) {
-      console.error("[VERIFY] Error:", err);
-      setError(err.response?.data?.message || err.message || "An error occurred during verification.");
+    } catch (error) {
+      console.error("[VERIFY] Full Error details:", error.response?.data || error.message);
       setStatus('error');
+      
+      // EXTRACT detailed message from backend if available (e.g. "Insufficient funds")
+      const backendMessage = error.response?.data?.message || error.response?.data?.error;
+      const displayError = backendMessage || error.message || "An unknown error occurred during verification.";
+      
+      setError(displayError);
     }
   };
 

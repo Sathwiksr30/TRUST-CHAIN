@@ -2231,6 +2231,12 @@ async function executeWillAndNotify(willId, trigger = 'manual') {
       } else {
         emailResult = await sendBeneficiaryNotificationEmails(metadata, receipt.hash);
       }
+      
+      // FIX: Mark the will as 'notified' in the database records to prevent the 
+      // scheduler from sending a 'recovery' notification later.
+      if (emailResult.sent > 0) {
+        markSecondMailSent(willId);
+      }
     } catch (emailErr) {
       console.error('[EXECUTE] Email notification error (non-fatal):', emailErr.message);
       emailResult = { sent: 0, failed: 0, skipped: 0, error: emailErr.message };
