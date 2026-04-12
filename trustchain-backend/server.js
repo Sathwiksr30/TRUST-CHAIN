@@ -1737,15 +1737,6 @@ async function sendStakeholderCreationEmails(willMetadata, { uploadUrl = null, c
 
   console.log(`[RESEND] Sending stakeholder creation emails for ${willId} to: ${allRecipients.join(', ')}`);
   
-  // Proactively generate the PDF for attachment
-  let pdfBuffer = null;
-  try {
-    const creationTxHash = txHash || `CREATED-${Date.now()}`;
-    pdfBuffer = await generateTrustChainPdfBuffer(willMetadata, creationTxHash);
-  } catch (pdfErr) {
-    console.error(`[PDF] Generation failed for stakeholder mail ${willId}:`, pdfErr.message);
-  }
-
   let sent = 0;
   let failed = 0;
 
@@ -1789,7 +1780,7 @@ async function sendStakeholderCreationEmails(willMetadata, { uploadUrl = null, c
       }
 
       bodyHtml += `
-          <p>The official signed Digital Will document is attached to this email for your records.</p>
+          <p>This is an automated notification for your records. You will receive a final email with the official document and claim link once the inheritance conditions are satisfied.</p>
           <p style="margin-top: 30px;">Thank you for using TrustChain.</p>
           <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
           <p style="font-size: 11px; color: #999; text-align: center;">TrustChain: Secure, Automated, Decentralized Wills.</p>
@@ -1799,13 +1790,7 @@ async function sendStakeholderCreationEmails(willMetadata, { uploadUrl = null, c
       await sendEmailViaResend({
         to: email,
         subject,
-        html: bodyHtml,
-        attachments: pdfBuffer ? [
-          {
-            filename: `TrustChain_Will_${willId}.pdf`,
-            content: pdfBuffer,
-          }
-        ] : []
+        html: bodyHtml
       });
       sent += 1;
       // Stagger to stay under rate limit
@@ -2130,8 +2115,13 @@ async function executeWillAndNotify(willId, trigger = 'manual') {
     }
   }
 
-  const deathConditionSelected = hasDeathCondition(willMetadata?.conditions || []);
-  if (deathConditionSelected && trigger !== 'death-approval') {
+  // Priority Condition Check: Use contract state for absolute reliability, fallback to metadata
+  const requiresDeath = Boolean(currentWillState.requiresDeath);
+  const deathVerified = Boolean(currentWillState.deathVerified);
+  
+  const isDeathWill = requiresDeath || hasDeathCondition(willMetadata?.conditions || []);
+  
+  if (isDeathWill && !deathVerified && trigger !== 'death-approval') {
     return { status: 'SKIPPED', reason: 'Death claim approval required', will: currentWillState };
   }
 
@@ -2351,9 +2341,17 @@ async function handleScheduledWillExecution(willId) {
     }
 
     if (execution.status === 'SKIPPED' && execution.reason.includes('no funds')) {
-      console.log(`[SCHEDULER] Will ${willId} skipped due to funds. Sending "Ready to Claim" notification...`);
       const { contract } = await getDigitalWillSignerAndContract();
       const willOnChain = await contract.wills(willId);
+      
+      // PROTECTION: Never send "Ready for Execution" (Second Mail) for death wills 
+      // if death hasn't been verified on-chain yet, even if funds are missing.
+      if (willOnChain.requiresDeath && !willOnChain.deathVerified) {
+        logSchedulerVerbose(`[SCHEDULER] Will ${willId} requires death verification first. Skipping 'Ready to Claim' mail.`);
+        return;
+      }
+
+      console.log(`[SCHEDULER] Will ${willId} skipped due to funds. Sending "Ready to Claim" notification...`);
       
       // Fetch metadata to get beneficiary emails
       let metadata = null;
@@ -2400,6 +2398,15 @@ async function handleScheduledWillExecution(willId) {
       
       if (willRecord && willRecord.metadataCid && ipfsInstance) {
         try {
+          const { contract } = await getDigitalWillSignerAndContract();
+          const willOnChain = await contract.wills(willId);
+
+          // PROTECTION: Ensure fallback mail follows the same death-verification rules
+          if (willOnChain.requiresDeath && !willOnChain.deathVerified) {
+            logSchedulerVerbose(`[SCHEDULER] Fallback check: Will ${willId} requires death verification. Skipping.`);
+            return;
+          }
+
           // 15s timeout for IPFS fetch to prevent hanging the scheduler
           const fetchPromise = ipfs.getFile(willRecord.metadataCid);
           const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('IPFS timeout (15s)')), 15000));

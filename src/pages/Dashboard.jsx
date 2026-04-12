@@ -2,7 +2,14 @@ import React, { useState, useEffect } from 'react';
 import './Dashboard.css';
 import { syncWillStatuses } from '../utils/willStatusSync';
 
-const API_BASE = process.env.REACT_APP_BACKEND_URL || `http://${window.location.hostname}:5000`;
+// Robust API base detection for production
+const getApiBase = () => {
+  if (process.env.REACT_APP_BACKEND_URL) return process.env.REACT_APP_BACKEND_URL.replace(/\/$/, "");
+  if (process.env.REACT_APP_API_BASE_URL) return process.env.REACT_APP_API_BASE_URL.replace(/\/$/, "");
+  return window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+};
+
+const API_BASE = getApiBase();
 const STORAGE_KEY = 'trustchain_documents';
 
 function Dashboard({ onNavigate }) {

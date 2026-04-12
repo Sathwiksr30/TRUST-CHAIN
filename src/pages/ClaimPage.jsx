@@ -2,7 +2,14 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import './ClaimPage.css';
 
-const API_BASE = process.env.REACT_APP_BACKEND_URL || `http://${window.location.hostname}:5000`;
+// Robust API base detection for production
+const getApiBase = () => {
+  if (process.env.REACT_APP_BACKEND_URL) return process.env.REACT_APP_BACKEND_URL.replace(/\/$/, "");
+  if (process.env.REACT_APP_API_BASE_URL) return process.env.REACT_APP_API_BASE_URL.replace(/\/$/, "");
+  return window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+};
+
+const API_BASE = getApiBase();
 
 function ClaimPage({ willId: propWillId, onNavigate }) {
   const [status, setStatus] = useState('confirm'); // confirm, processing, success, error
@@ -41,8 +48,17 @@ function ClaimPage({ willId: propWillId, onNavigate }) {
         throw new Error(response.data.message || "Claim failed.");
       }
     } catch (err) {
-      console.error("Claim Error:", err);
-      const msg = err.response?.data?.message || err.message;
+      console.error("Claim Error Details:", {
+        message: err.message,
+        response: err.response?.data,
+        config: err.config?.url
+      });
+      
+      let msg = err.response?.data?.message || err.message;
+      if (err.message === 'Network Error') {
+        msg = "Network Error: Could not connect to the TrustChain server. Please check your internet connection or ensure the backend service is running.";
+      }
+      
       setError(msg);
       setStatus('error');
     }
@@ -139,7 +155,14 @@ function ClaimPage({ willId: propWillId, onNavigate }) {
                <i className="fas fa-exclamation-triangle fa-3x" style={{color: '#e53e3e'}}></i>
             </div>
             <p className="error-message">{error}</p>
-            <button className="btn-professional-no" onClick={() => setStatus('confirm')}>Try Again</button>
+            
+            <div className="error-diagnostics" style={{ marginTop: '20px', padding: '10px', background: '#fff5f5', borderRadius: '8px', fontSize: '12px', textAlign: 'left', border: '1px solid #fed7d7' }}>
+              <p style={{ margin: '0 0 5px 0', fontWeight: 'bold', color: '#c53030' }}>Technical Diagnostics:</p>
+              <code style={{ wordBreak: 'break-all' }}>Target API: {API_BASE}/will/{willId}/claim-request</code>
+              <p style={{ margin: '5px 0 0 0', color: '#718096' }}>Context: {window.location.origin}</p>
+            </div>
+
+            <button className="btn-professional-no" style={{ marginTop: '20px' }} onClick={() => setStatus('confirm')}>Try Again</button>
           </div>
         </div>
       </div>

@@ -9,11 +9,13 @@ import contractABI from '../abi/DigitalWill.json';
 const CONTRACT_ADDRESS = process.env.REACT_APP_DIGITAL_WILL_CONTRACT_ADDRESS || "0x6C286aAFC57b374C4BDD0a84371c9551d4778914";
 const DIGITAL_WILL_ABI = Array.isArray(contractABI) ? contractABI : (contractABI?.abi || []);
 
-const API_BASE = (
-  process.env.REACT_APP_API_BASE_URL ||
-  process.env.REACT_APP_BACKEND_URL ||
-  `http://${window.location.hostname}:5000`
-).replace(/\/$/, "");
+const getApiBase = () => {
+  if (process.env.REACT_APP_BACKEND_URL) return process.env.REACT_APP_BACKEND_URL.replace(/\/$/, "");
+  if (process.env.REACT_APP_API_BASE_URL) return process.env.REACT_APP_API_BASE_URL.replace(/\/$/, "");
+  return window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+};
+
+const API_BASE = getApiBase();
 const API_KEY = (process.env.REACT_APP_API_KEY || 'trustchain_dummy_key').trim();
 
 const EVM_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;

@@ -3,11 +3,13 @@ import axios from "axios";
 import './UploadDocument.css';
 import { toIndiaDateString } from '../utils/timezone';
 
-const API_BASE = (
-  process.env.REACT_APP_API_BASE_URL ||
-  process.env.REACT_APP_BACKEND_URL ||
-  "http://localhost:5000"
-).replace(/\/$/, "");
+const getApiBase = () => {
+  if (process.env.REACT_APP_BACKEND_URL) return process.env.REACT_APP_BACKEND_URL.replace(/\/$/, "");
+  if (process.env.REACT_APP_API_BASE_URL) return process.env.REACT_APP_API_BASE_URL.replace(/\/$/, "");
+  return window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+};
+
+const API_BASE = getApiBase();
 const API_KEY = (process.env.REACT_APP_API_KEY || 'trustchain_dummy_key').trim();
 
 const UploadDocument = () => {

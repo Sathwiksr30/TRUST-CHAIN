@@ -1,7 +1,14 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 
-const API_BASE = process.env.REACT_APP_BACKEND_URL || `http://${window.location.hostname}:5000`;
+// Robust API base detection for production
+const getApiBase = () => {
+  if (process.env.REACT_APP_BACKEND_URL) return process.env.REACT_APP_BACKEND_URL.replace(/\/$/, "");
+  if (process.env.REACT_APP_API_BASE_URL) return process.env.REACT_APP_API_BASE_URL.replace(/\/$/, "");
+  return window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+};
+
+const API_BASE = getApiBase();
 
 function ReleaseWill({ willId: propWillId, onNavigate }) {
   const [file, setFile] = useState(null);
@@ -164,6 +171,13 @@ function ReleaseWill({ willId: propWillId, onNavigate }) {
              <i className="fas fa-exclamation-triangle fa-4x" style={{ color: '#e53e3e', marginBottom: '20px' }}></i>
              <h3 style={{ color: '#c53030' }}>Verification Failed</h3>
              <p style={{ color: '#718096' }}>{error}</p>
+
+             <div className="error-diagnostics" style={{ marginTop: '20px', padding: '10px', background: '#fff5f5', borderRadius: '8px', fontSize: '11px', textAlign: 'left', border: '1px solid #fed7d7' }}>
+              <p style={{ margin: '0 0 5px 0', fontWeight: 'bold', color: '#c53030' }}>Technical Diagnostics:</p>
+              <code style={{ wordBreak: 'break-all' }}>Target API: {API_BASE}/verify-death-and-execute</code>
+              <p style={{ margin: '5px 0 0 0', color: '#718096' }}>Origin: {window.location.origin}</p>
+            </div>
+
              <button 
                onClick={() => setStatus('idle')}
                style={{ 

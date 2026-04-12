@@ -3,12 +3,15 @@ import axios from 'axios';
 import './ViewDocuments.css';
 import { toIndiaDateString } from '../utils/timezone';
 
-const configuredBackendUrl = (
-  process.env.REACT_APP_BACKEND_URL ||
-  process.env.REACT_APP_API_BASE_URL ||
-  ''
-).trim();
-const API_BASE = (configuredBackendUrl || `http://${window.location.hostname}:5000`).replace(/\/$/, '');
+// Robust API base detection for production
+const getApiBase = () => {
+  if (process.env.REACT_APP_BACKEND_URL) return process.env.REACT_APP_BACKEND_URL.replace(/\/$/, "");
+  if (process.env.REACT_APP_API_BASE_URL) return process.env.REACT_APP_API_BASE_URL.replace(/\/$/, "");
+  if (process.env.REACT_APP_WILL_BACKEND_URL) return process.env.REACT_APP_WILL_BACKEND_URL.replace(/\/$/, "");
+  return window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+};
+
+const API_BASE = getApiBase();
 const API_KEY = (process.env.REACT_APP_API_KEY || 'trustchain_dummy_key').trim();
 const STORAGE_KEY = 'trustchain_documents';
 
