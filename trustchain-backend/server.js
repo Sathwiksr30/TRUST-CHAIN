@@ -2870,6 +2870,7 @@ app.post("/verify", upload.single("document"), async (req, res) => {
 
 // New endpoint: Verify Death and Execute Will
 app.post("/verify-death-and-execute", deathCertificateUpload.single("certificate"), async (req, res) => {
+  let filePath = null;
   try {
     const willId = String(req.body.willId || '').trim();
     console.log("Incoming willId:", willId); // EXPLICIT LOGGING
@@ -2879,7 +2880,7 @@ app.post("/verify-death-and-execute", deathCertificateUpload.single("certificate
       return res.status(400).json({ status: "ERROR", message: "Missing willId or certificate file" });
     }
 
-    const filePath = req.file.path;
+    filePath = req.file.path;
     const fileName = req.file.originalname;
 
     // 0. Check if will exists
@@ -2939,9 +2940,14 @@ app.post("/verify-death-and-execute", deathCertificateUpload.single("certificate
     });
 
   } catch (error) {
-    console.error(`[DEATH-VERIFY] ❌ Error:`, error.message);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    return res.status(500).json({ status: "ERROR", message: error.message });
+    console.error(`[DEATH-VERIFY] ❌ Error in verification flow:`, error.message);
+    if (filePath && fs.existsSync(filePath)) {
+      try { fs.unlinkSync(filePath); } catch (e) {}
+    }
+    return res.status(500).json({ 
+      status: "ERROR", 
+      message: error.message || "An internal error occurred during death verification." 
+    });
   }
 });
 
