@@ -54,7 +54,7 @@ function Navbar({ onNavigate, currentView }) {
   const handleConnectWallet = async () => {
     setConnecting(true);
     try {
-      const account = await connectMetaMask({ requireHardhat: true });
+      const account = await connectMetaMask({ requireNetwork: true });
       setUser(account);
       onNavigate('home');
     } catch (error) {

@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-03-28T11:06:08+05:30",
+  "id": "WILL-1774676164886",
+  "name": "RAKSHITHA DIGITAL WILL FOR INCOIN",
+  "description": "Execute upon verified death",
+  "testatorName": "RAKSHITHA",
+  "testatorGuardianName": "SUDHAKAR",
+  "testatorAge": "21",
+  "testatorAddress": "HYDERABAD",
+  "religion": "HINDU",
+  "dob": "2004-11-02",
+  "place": "HYDERABAD",
+  "testatorSignature": "RAKSHITHA",
+  "witnesses": [
+    {
+      "name": "SHIVANI",
+      "address": "HYDERABAD",
+      "signature": "SHIVANI"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Death",
+      "value": ""
+    }
+  ],
+  "owner": "0xe73f36a707b1e89cec0a937ce4c86d3629df57b1",
+  "beneficiaries": [
+    {
+      "name": "SAI",
+      "email": "challasathwikreddy55@gmail.com",
+      "walletAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+      "share": 100
+    }
+  ],
+  "nominees": [
+    {
+      "name": "SHALINI",
+      "email": "23r21a6675@mlrit.ac.in",
+      "relation": "sister",
+      "walletAddress": ""
+    }
+  ],
+  "assets": [
+    {
+      "type": "Cryptocurrency",
+      "description": "INCOIN ",
+      "value": "100000"
+    }
+  ]
+}

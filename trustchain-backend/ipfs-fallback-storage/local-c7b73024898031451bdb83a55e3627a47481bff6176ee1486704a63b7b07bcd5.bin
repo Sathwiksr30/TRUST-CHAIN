@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-04-10T11:12:03+05:30",
+  "id": "WILL-1775799721137",
+  "name": "yguhbd",
+  "description": "Execute upon verified death",
+  "testatorName": "yudghb",
+  "testatorGuardianName": "3db",
+  "testatorAge": "25",
+  "testatorAddress": "hjbhj",
+  "religion": "gewbads",
+  "dob": "2005-08-30",
+  "place": "jhhjcbds",
+  "testatorSignature": "kbfkjfb",
+  "witnesses": [
+    {
+      "name": "blkjads",
+      "address": "kchjab",
+      "signature": "kackjasc"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Death",
+      "value": ""
+    }
+  ],
+  "owner": "0xe73f36a707b1e89cec0a937ce4c86d3629df57b1",
+  "beneficiaries": [
+    {
+      "name": "hjvfhjavj",
+      "email": "challasathwikreddy55@gmail.com",
+      "walletAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266 ",
+      "share": 100
+    }
+  ],
+  "nominees": [
+    {
+      "name": "jbkjds",
+      "email": "23r21a6675@mlrit.ac.in",
+      "relation": "hjfhjdb",
+      "walletAddress": ""
+    }
+  ],
+  "assets": [
+    {
+      "type": "Jewelry",
+      "description": "bhjdbsc",
+      "value": "jhghjcb"
+    }
+  ]
+}

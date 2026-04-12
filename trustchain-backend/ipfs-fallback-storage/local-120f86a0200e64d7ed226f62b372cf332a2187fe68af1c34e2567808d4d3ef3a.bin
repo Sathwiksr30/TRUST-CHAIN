@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-04-12T17:46:30+05:30",
+  "id": "WILL-1775996188942",
+  "name": "zexcvbn",
+  "description": "Execute upon verified death",
+  "testatorName": "dxcfgvbhnj",
+  "testatorGuardianName": "fxdcgvbh",
+  "testatorAge": "25",
+  "testatorAddress": "cvbn",
+  "religion": "xcfgvbhnj",
+  "dob": "2005-04-08",
+  "place": "gvbn",
+  "testatorSignature": "cfvbnm",
+  "witnesses": [
+    {
+      "name": "jhcshjcbc",
+      "address": "jbccjascb",
+      "signature": "jgcjasc"
+    }
+  ],
+  "witness1Name": "",
+  "witness1Address": "",
+  "witness1Signature": "",
+  "witness2Name": "",
+  "witness2Address": "",
+  "witness2Signature": "",
+  "conditions": [
+    {
+      "type": "Death",
+      "value": ""
+    }
+  ],
+  "owner": "0xe73f36a707b1e89cec0a937ce4c86d3629df57b1",
+  "beneficiaries": [
+    {
+      "name": "sathwik",
+      "email": "challasathwikreddy55@gmail.com",
+      "walletAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+      "share": 100
+    }
+  ],
+  "nominees": [
+    {
+      "name": "sai",
+      "email": "23r21a6675@mlrit.ac.in",
+      "relation": "bro",
+      "walletAddress": ""
+    }
+  ],
+  "assets": [
+    {
+      "type": "Vehicles",
+      "description": "jcjdscsc",
+      "value": "8458542"
+    }
+  ]
+}

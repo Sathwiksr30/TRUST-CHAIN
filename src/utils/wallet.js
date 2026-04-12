@@ -8,6 +8,35 @@ const TARGET_CHAIN_ID_HEX = IS_PRODUCTION ? SEPOLIA_CHAIN_ID_HEX : HARDHAT_CHAIN
 
 let connectInFlight = null;
 
+function isMetaMaskConnectFailureMessage(message) {
+  const msg = String(message || '').toLowerCase();
+  return (
+    msg.includes('failed to connect to metamask') ||
+    (msg.includes('metamask') && msg.includes('failed to connect')) ||
+    msg.includes('disconnected') ||
+    msg.includes('provider disconnected')
+  );
+}
+
+function normalizeMetaMaskError(error, fallbackMessage = 'MetaMask connection failed. Open MetaMask, unlock it, and retry.') {
+  if (!error) return new Error(fallbackMessage);
+
+  if (error?.code === -32002) {
+    return new Error('MetaMask already has a pending connection request. Open MetaMask and approve/reject it first.');
+  }
+
+  if (error?.code === 4001) {
+    return new Error('Connection request rejected in MetaMask.');
+  }
+
+  const rawMessage = String(error?.message || error || '');
+  if (isMetaMaskConnectFailureMessage(rawMessage)) {
+    return new Error('MetaMask connection failed. Open MetaMask, unlock it, and retry the connection.');
+  }
+
+  return error instanceof Error ? error : new Error(rawMessage || fallbackMessage);
+}
+
 const NETWORK_PARAMS = IS_PRODUCTION
   ? {
       chainId: SEPOLIA_CHAIN_ID_HEX,
@@ -75,11 +104,21 @@ export function shortenAddress(address) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
-export async function ensureHardhatNetwork() {
+export async function ensureCorrectNetwork() {
   const provider = getMetaMaskProvider();
   if (!provider) return;
 
-  const chainId = await provider.request({ method: "eth_chainId" });
+  // Wait a moment to ensure provider is ready to receive requests
+  await new Promise(r => setTimeout(r, 100));
+
+  let chainId;
+  try {
+    chainId = await provider.request({ method: "eth_chainId" });
+  } catch (err) {
+    console.error("Failed to fetch chainId", err);
+    return; // Don't block if we can't even get the chainId
+  }
+
   if (String(chainId).toLowerCase() === TARGET_CHAIN_ID_HEX) {
     return;
   }
@@ -90,18 +129,23 @@ export async function ensureHardhatNetwork() {
       params: [{ chainId: TARGET_CHAIN_ID_HEX }],
     });
   } catch (switchError) {
+    // This error code indicates that the chain has not been added to MetaMask.
     if (switchError.code === 4902) {
-      await provider.request({
-        method: "wallet_addEthereumChain",
-        params: [NETWORK_PARAMS],
-      });
+      try {
+        await provider.request({
+          method: "wallet_addEthereumChain",
+          params: [NETWORK_PARAMS],
+        });
+      } catch (addError) {
+        throw normalizeMetaMaskError(addError, 'Failed to add the required network to MetaMask.');
+      }
       return;
     }
-    throw switchError;
+    throw normalizeMetaMaskError(switchError, 'Unable to switch MetaMask network. Open MetaMask and switch network manually.');
   }
 }
 
-export async function connectMetaMask({ requireHardhat = true } = {}) {
+export async function connectMetaMask({ requireNetwork = true } = {}) {
   if (connectInFlight) {
     return connectInFlight;
   }
@@ -135,7 +179,10 @@ export async function connectMetaMask({ requireHardhat = true } = {}) {
   try {
     // Reuse already authorized account when available to avoid repeated connect prompts.
     accounts = await provider.request({ method: "eth_accounts" });
-  } catch {
+  } catch (error) {
+    if (isMetaMaskConnectFailureMessage(error?.message)) {
+      throw normalizeMetaMaskError(error);
+    }
     accounts = [];
   }
 
@@ -143,19 +190,7 @@ export async function connectMetaMask({ requireHardhat = true } = {}) {
     try {
       accounts = await provider.request({ method: "eth_requestAccounts" });
     } catch (error) {
-      if (error?.code === -32002) {
-        throw new Error("MetaMask already has a pending connection request. Open MetaMask and approve/reject it first.");
-      }
-      if (error?.code === 4001) {
-        throw new Error("Connection request rejected in MetaMask.");
-      }
-      const msg = String(error?.message || "").toLowerCase();
-      if (msg.includes("failed to connect to metamask") || msg.includes("connection") || msg.includes("disconnected")) {
-        throw new Error(
-          "MetaMask connection failed. Open MetaMask, unlock it, and retry the connection."
-        );
-      }
-      throw error;
+      throw normalizeMetaMaskError(error);
     }
   }
 
@@ -165,8 +200,17 @@ export async function connectMetaMask({ requireHardhat = true } = {}) {
     throw new Error("No wallet account was returned by MetaMask.");
   }
 
-  if (requireHardhat) {
-    await ensureHardhatNetwork();
+  if (requireNetwork) {
+    try {
+      await ensureCorrectNetwork();
+    } catch (error) {
+      // If we just got a connection error, it might be because the network switch 
+      // triggered a re-initialization in MetaMask.
+      if (isMetaMaskConnectFailureMessage(error?.message)) {
+        throw new Error("MetaMask is re-connecting to the network. Please wait a moment and try again.");
+      }
+      throw error;
+    }
   }
 
   persistWalletSession(walletAddress);
@@ -175,6 +219,8 @@ export async function connectMetaMask({ requireHardhat = true } = {}) {
 
   try {
     return await connectInFlight;
+  } catch (error) {
+    throw normalizeMetaMaskError(error);
   } finally {
     connectInFlight = null;
   }

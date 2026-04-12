@@ -37,6 +37,7 @@ const WILL_DEATH_RELEASE_BUFFER_SECONDS = Number(process.env.WILL_DEATH_RELEASE_
 const WILL_AUTO_FUND_ETH = process.env.WILL_AUTO_FUND_ETH || '1';
 const WILL_MIN_EXECUTION_FUND_ETH = process.env.WILL_MIN_EXECUTION_FUND_ETH || '1';
 const REQUEST_LOG_LEVEL = (process.env.REQUEST_LOG_LEVEL || 'minimal').toLowerCase();
+const SCHEDULER_VERBOSE_LOGS = String(process.env.SCHEDULER_VERBOSE_LOGS || 'false').toLowerCase() === 'true';
 
 // Email configuration
 const EMAIL_HOST = process.env.EMAIL_HOST || 'smtp.gmail.com';
@@ -141,6 +142,12 @@ function toIndiaDisplayString(input = new Date()) {
     second: '2-digit',
     hour12: true
   }).format(date);
+}
+
+function logSchedulerVerbose(message) {
+  if (SCHEDULER_VERBOSE_LOGS) {
+    console.log(message);
+  }
 }
 
 // Ensure uploads directory exists
@@ -955,7 +962,7 @@ async function getDigitalWillSignerAndContract() {
     throw new Error('DIGITAL_WILL_CONTRACT_ADDRESS is not a valid wallet/contract address');
   }
 
-  const provider = new ethers.JsonRpcProvider(BLOCKCHAIN_RPC_URL);
+  const provider = new ethers.JsonRpcProvider(BLOCKCHAIN_RPC_URL, Number(process.env.BLOCKCHAIN_CHAIN_ID || 31337), { staticNetwork: true });
 
   // If no private key, return read-only mode
   if (!DIGITAL_WILL_OWNER_PRIVATE_KEY) {
@@ -1036,6 +1043,21 @@ function disableWillScheduleInRecords(willId, reason) {
   if (changed) {
     writeJsonArraySafe(blockchainRecordsFile, records);
   }
+}
+function markSecondMailSent(willId) {
+  const records = readJsonArraySafe(blockchainRecordsFile);
+  let changed = false;
+  for (let i = records.length - 1; i >= 0; i -= 1) {
+    const record = records[i];
+    if (record?.type === 'DIGITAL_WILL' && record?.willId === willId) {
+      if (!record.secondEmailSent) {
+        records[i] = { ...record, secondEmailSent: true, secondEmailSentAt: toIndiaIsoString() };
+        changed = true;
+      }
+      break;
+    }
+  }
+  if (changed) writeJsonArraySafe(blockchainRecordsFile, records);
 }
 
 // ==========================================
@@ -1598,7 +1620,8 @@ async function sendExecutedWillEmailsWithAttachment(willMetadata, txHash) {
   let sent = 0;
   let failed = 0;
 
-  await Promise.allSettled(uniqueRecipients.map(async (email) => {
+  // Process emails in series with a small delay to avoid 429 rate limit (5 req/sec limit)
+  for (const email of uniqueRecipients) {
     try {
       const emailLower = email.toLowerCase().trim();
       const beneficiaries = (willMetadata?.beneficiaries || []).map(b => String(b?.email || '').toLowerCase().trim());
@@ -1684,11 +1707,13 @@ async function sendExecutedWillEmailsWithAttachment(willMetadata, txHash) {
         ]
       });
       sent += 1;
+      // Stagger to stay under rate limit
+      await new Promise(resolve => setTimeout(resolve, 500));
     } catch (err) {
       failed += 1;
       console.error(`[RESEND] Failed to send executed will PDF to ${email}:`, err.message);
     }
-  }));
+  }
 
   return { sent, failed, skipped };
 }
@@ -1713,7 +1738,8 @@ async function sendStakeholderCreationEmails(willMetadata, { uploadUrl = null, c
   let sent = 0;
   let failed = 0;
 
-  await Promise.allSettled(allRecipients.map(async (email) => {
+  // Process emails in series with a small delay to avoid 429 rate limit (5 req/sec limit)
+  for (const email of allRecipients) {
     try {
       const isEligibleReceiver = beneficiaries.includes(email) || nominees.includes(email);
 
@@ -1764,11 +1790,13 @@ async function sendStakeholderCreationEmails(willMetadata, { uploadUrl = null, c
         html: bodyHtml
       });
       sent += 1;
+      // Stagger to stay under rate limit
+      await new Promise(resolve => setTimeout(resolve, 500));
     } catch (err) {
       failed += 1;
       console.error(`[RESEND] Stakeholder notification failed for ${email}:`, err.message);
     }
-  }));
+  }
 
   console.log(`[NOTIFY] ✓ Stakeholder notifications sent for ${willId} (Total: ${sent})`);
   return { sent, failed, skipped: 0 };
@@ -1804,10 +1832,18 @@ async function sendReadyToClaimEmails(willMetadata) {
     <p>Connect your wallet to claim the distribution.</p>
   `;
 
+  const records = readJsonArraySafe(blockchainRecordsFile);
+  const existing = records.find(r => r.willId === willId && r.type === 'DIGITAL_WILL');
+  if (existing?.secondEmailSent) {
+    console.log(`[RESEND] Second mail already sent for ${willId}. Skipping.`);
+    return { sent: 0, failed: 0, skipped: uniqueRecipients.length };
+  }
+
   let sent = 0;
   let failed = 0;
 
-  await Promise.allSettled(uniqueRecipients.map(async (email) => {
+  // Process emails in series with a small delay to avoid 429 rate limit (5 req/sec limit)
+  for (const email of uniqueRecipients) {
     try {
       await sendEmailViaResend({
         to: email,
@@ -1815,11 +1851,17 @@ async function sendReadyToClaimEmails(willMetadata) {
         html
       });
       sent += 1;
+      // 500ms delay to ensure we stay under 5 emails/sec safely
+      await new Promise(resolve => setTimeout(resolve, 500));
     } catch (err) {
       failed += 1;
       console.error(`[RESEND] Failed to send claim alert to ${email}:`, err.message);
     }
-  }));
+  }
+
+  if (sent > 0) {
+    markSecondMailSent(willId);
+  }
 
   return { sent, failed, skipped: recipients.skipped };
 }
@@ -1870,8 +1912,14 @@ function scheduleWillExecution(willId, releaseTimeSeconds) {
   };
 
   scheduleNext();
-  const scheduledAt = toIndiaIsoString(new Date(targetAtMs));
-  console.log(`[SCHEDULER] Scheduled will ${willId} for ${scheduledAt}`);
+  const scheduledAt = new Date(targetAtMs);
+  const delaySec = Math.round((targetAtMs - Date.now()) / 1000);
+  
+  if (delaySec > 0) {
+    console.log(`[SCHEDULER] ⏳ Timer started for ${willId}. Trigger in ${Math.round(delaySec / 60)} min (${toIndiaIsoString(scheduledAt)})`);
+  } else {
+    logSchedulerVerbose(`[SCHEDULER] ⚡ Will ${willId} is overdue. Triggering execution immediately.`);
+  }
 }
 
 function recoverWillSchedulesFromRecords() {
@@ -1924,7 +1972,17 @@ async function recoverWillSchedulesFromRecordsSafe() {
 
     try {
       await contract.getWill(record.willId);
-      scheduleWillExecution(record.willId, Number(record.releaseTime));
+      
+      // Skip scheduling past events if already notified to avoid startup spam
+      const now = Date.now();
+      const targetTime = Number(record.releaseTime) * 1000;
+      if (targetTime < now && record.secondEmailSent) {
+        // console.log(`[SCHEDULER] Skipping stale schedule for ${record.willId} (Already notified)`);
+        continue;
+      }
+
+      // Added 500ms staggered delay for restored schedules to avoid hitting Resend rate limit (5 emails/sec)
+      scheduleWillExecution(record.willId, Number(record.releaseTime) + (scheduled * 0.5));
       scheduled += 1;
     } catch (error) {
       const message = formatBlockchainError(error);
@@ -1940,10 +1998,54 @@ async function recoverWillSchedulesFromRecordsSafe() {
     }
   }
 
-  console.log(`[SCHEDULER] Restored schedules for ${scheduled} will(s)`);
   if (disabledAsStale > 0) {
     console.warn(`[SCHEDULER] Disabled ${disabledAsStale} stale schedule(s) from old blockchain sessions`);
   }
+}
+
+// ==========================================
+// BACKGROUND FAIL-SAFE WATCHER
+// ==========================================
+
+async function checkOverdueWillsFailSafe() {
+  try {
+    const records = readJsonArraySafe(blockchainRecordsFile);
+    const now = Math.floor(Date.now() / 1000);
+    
+    // Find Digital Wills that are past their release time but haven't been notified
+    const overdueAndUnnotified = records.filter(r => 
+      r.type === 'DIGITAL_WILL' && 
+      r.willId && 
+      !r.secondEmailSent && 
+      !r.schedulerDisabled &&
+      r.releaseTime && 
+      Number(r.releaseTime) <= (now - 10) // Small buffer of 10s to let the setTimeout fire first
+    );
+
+    if (overdueAndUnnotified.length > 0) {
+      logSchedulerVerbose(`[WATCHER] Found ${overdueAndUnnotified.length} overdue wills without notification. Triggering fail-safe...`);
+      // Process in series to avoid RPC/Email rate limits
+      for (const record of overdueAndUnnotified) {
+        await handleScheduledWillExecution(record.willId).catch(err => {
+          console.error(`[WATCHER] Fail-safe execution failed for ${record.willId}:`, err.message);
+        });
+      }
+    }
+  } catch (err) {
+    console.error(`[WATCHER] Critical error in background loop:`, err.message);
+  }
+}
+
+function startBackgroundWatcher() {
+  logSchedulerVerbose('[WATCHER] Starting background fail-safe loop (60s interval)...');
+  
+  // Every 60 seconds, check for overdue wills
+  setInterval(checkOverdueWillsFailSafe, 60 * 1000);
+  
+  // Every 10 minutes, log a heartbeat
+  setInterval(() => {
+    logSchedulerVerbose(`[WATCHER] Heartbeat check at ${toIndiaIsoString()}`);
+  }, 10 * 60 * 1000);
 }
 
 async function getBlockchainStatus() {
@@ -1969,7 +2071,7 @@ async function executeWillAndNotify(willId, trigger = 'manual') {
     throw error;
   }
 
-  console.log(`[EXECUTE] Will state fetched for ${willId}. Executed: ${currentWillState.executed}, Funded: ${currentWillState.fundedAmountEth} ETH`);
+  logSchedulerVerbose(`[EXECUTE] Will state fetched for ${willId}. Executed: ${currentWillState.executed}, Funded: ${currentWillState.fundedAmountEth} ETH`);
 
   let willMetadata = null;
   if (currentWillState.metadataCid && ipfsInstance) {
@@ -1994,14 +2096,8 @@ async function executeWillAndNotify(willId, trigger = 'manual') {
     return { status: 'SKIPPED', reason: 'Will is already executed', will: currentWillState };
   }
 
-  try {
-    const fundedAmountWei = BigInt(currentWillState.fundedAmountWei || '0');
-    if (fundedAmountWei <= 0n) {
-      return { status: 'SKIPPED', reason: 'Will has no funds. Fund the will before execution.', will: currentWillState };
-    }
-  } catch {
-    return { status: 'SKIPPED', reason: 'Could not read will funded amount', will: currentWillState };
-  }
+  // Proceed regardless of current balance to allow the 'Auto Top-up' logic to attempt funding.
+  // 0n balance check is handled after the top-up attempt below.
 
   const now = Math.floor(Date.now() / 1000);
   if (Number(currentWillState.releaseTime) > now && trigger !== 'death-approval') {
@@ -2176,7 +2272,15 @@ async function sendMissingSecondMailForExecutedWill(willId) {
 }
 
 async function handleScheduledWillExecution(willId) {
-  console.log(`[SCHEDULER] Triggering execution for ${willId}...`);
+  // FAST CHECK: Avoid duplicate processing if already notified
+  const records = readJsonArraySafe(blockchainRecordsFile);
+  const record = records.find(r => r.willId === willId && r.type === 'DIGITAL_WILL');
+  if (record?.secondEmailSent) {
+    // console.log(`[SCHEDULER] ${willId} already notified. Skipping trigger.`);
+    return;
+  }
+
+  logSchedulerVerbose(`[SCHEDULER] Triggering execution for ${willId}...`);
   try {
     const execution = await executeWillAndNotify(willId, 'scheduled');
     if (execution.status === 'EXECUTED') {
@@ -2195,11 +2299,39 @@ async function handleScheduledWillExecution(willId) {
       if (Number(recovered?.sent || 0) > 0) {
         console.log(`[SCHEDULER] ✓ Recovered missing second mail for executed will ${willId}.`);
       } else {
-        console.log(`[SCHEDULER] Second mail recovery skipped for ${willId}: ${recovered?.reason || 'not needed'}`);
+        logSchedulerVerbose(`[SCHEDULER] Second mail recovery skipped for ${willId}: ${recovered?.reason || 'not needed'}`);
       }
     }
 
-    console.log(`[SCHEDULER] Will ${willId} skipped: ${execution.reason}`);
+    if (execution.status === 'SKIPPED' && execution.reason.includes('no funds')) {
+      console.log(`[SCHEDULER] Will ${willId} skipped due to funds. Sending "Ready to Claim" notification...`);
+      const { contract } = await getDigitalWillSignerAndContract();
+      const willOnChain = await contract.wills(willId);
+      
+      // Fetch metadata to get beneficiary emails
+      let metadata = null;
+      if (willOnChain.metadataCid && ipfsInstance) {
+        try {
+          const buffer = await ipfs.getFile(willOnChain.metadataCid);
+          metadata = JSON.parse(buffer.toString('utf8'));
+        } catch {}
+      }
+
+      if (metadata) {
+        await sendReadyToClaimEmails(metadata);
+      }
+    }
+
+    const isNoisySkip =
+      execution.reason === 'Will is already executed' ||
+      execution.reason === 'Death claim approval required' ||
+      execution.reason === 'Conditions not met yet (on-chain check failed)';
+
+    if (isNoisySkip) {
+      logSchedulerVerbose(`[SCHEDULER] Will ${willId} skipped: ${execution.reason}`);
+    } else {
+      console.log(`[SCHEDULER] Will ${willId} skipped: ${execution.reason}`);
+    }
   } catch (error) {
     const message = formatBlockchainError(error);
     const isPermanent = /missing revert data|willnotfound|no deployed contract|could not coalesce|execution reverted/i.test(message);
@@ -2211,6 +2343,30 @@ async function handleScheduledWillExecution(willId) {
     }
 
     console.error(`[SCHEDULER] Auto execution failed for ${willId}:`, message);
+
+    // PERFECT FALLBACK: Even if execution failed (network/gas), ensure "Second Mail" is sent
+    // if we can at least find the metadata locally to identify beneficiaries.
+    if (!/already executed/i.test(message)) {
+      console.log(`[SCHEDULER] Attempting fallback notification for ${willId} using local records...`);
+      const records = readJsonArraySafe(blockchainRecordsFile);
+      const willRecord = records.find(r => r.willId === willId && r.type === 'DIGITAL_WILL');
+      
+      if (willRecord && willRecord.metadataCid && ipfsInstance) {
+        try {
+          // 15s timeout for IPFS fetch to prevent hanging the scheduler
+          const fetchPromise = ipfs.getFile(willRecord.metadataCid);
+          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('IPFS timeout (15s)')), 15000));
+          const buffer = await Promise.race([fetchPromise, timeoutPromise]);
+          const metadata = JSON.parse(buffer.toString('utf8'));
+          if (metadata) {
+            await sendReadyToClaimEmails(metadata);
+            console.log(`[SCHEDULER] ✓ Fallback "Second Mail" sent for ${willId}`);
+          }
+        } catch (fallbackErr) {
+          console.error(`[SCHEDULER] Fallback notification failed:`, fallbackErr.message);
+        }
+      }
+    }
   }
 }
 
@@ -3353,8 +3509,19 @@ app.get('/will/:willId', async (req, res) => {
   try {
     const willId = String(req.params.willId || '').trim();
     if (!willId) return res.status(400).json({ status: 'ERROR', message: 'willId is required' });
+    
     const { contract } = await getDigitalWillSignerAndContract();
-    const willState = await getWillState(contract, willId);
+    let willState;
+    try {
+      willState = await getWillState(contract, willId);
+    } catch (err) {
+      const msg = formatBlockchainError(err);
+      if (/not found/i.test(msg)) {
+        return res.status(404).json({ status: 'ERROR', message: `Will ${willId} not found on blockchain.` });
+      }
+      throw err;
+    }
+    
     return res.json({ status: 'SUCCESS', will: willState });
   } catch (error) {
     return res.status(500).json({ status: 'ERROR', message: formatBlockchainError(error) });
@@ -3613,6 +3780,9 @@ const server = app.listen(PORT, async () => {
   console.log("\n" + "=".repeat(60));
   console.log("✅ Ready to receive requests!");
   console.log("=".repeat(60) + "\n");
+
+  // Start the background fail-safe watcher
+  startBackgroundWatcher();
 });
 
 // Cleanup: Graceful shutdown

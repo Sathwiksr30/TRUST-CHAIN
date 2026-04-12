@@ -17,15 +17,19 @@ function WalletConnect({ onConnected }) {
     setConnecting(true);
 
     try {
-      const account = await connectMetaMask({ requireHardhat: true });
+      const account = await connectMetaMask({ requireNetwork: true });
       if (onConnected) {
         onConnected(account);
       }
     } catch (err) {
       const message = err?.message || "MetaMask connection failed.";
-      if (message.toLowerCase().includes("localhost")) {
+      if (message.toLowerCase().includes("re-connecting") || message.toLowerCase().includes("failed to connect")) {
         setError(
-          "MetaMask could not reach http://127.0.0.1:8545. Start Hardhat node and enable localhost access in MetaMask settings."
+          "MetaMask is currently busy or re-connecting. Please wait a few seconds and try clicking 'Connect' again."
+        );
+      } else if (message.toLowerCase().includes("localhost")) {
+        setError(
+          "MetaMask could not reach the local node. Ensure your blockchain is running or check your internet."
         );
       } else {
         setError(message);
