@@ -94,7 +94,7 @@ const UploadDocument = () => {
           owner: localStorage.getItem('trustchain_user') || 'anonymous',
           path: data.file?.path,
           authenticity: data.verification?.confidence || 0,
-          ipfsLink: data.ipfs?.cid ? `http://localhost:5000/api/ipfs/preview/${data.ipfs.cid}` : null
+          ipfsLink: data.ipfs?.cid ? `${API_BASE}/api/ipfs/preview/${data.ipfs.cid}` : null
         };
         const stored = JSON.parse(localStorage.getItem('trustchain_documents') || '[]');
         stored.push(doc);

@@ -46,7 +46,7 @@ const EMAIL_USER = process.env.EMAIL_USER || '';
 const EMAIL_PASS = process.env.EMAIL_PASS || '';
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const EMAIL_FROM = process.env.EMAIL_FROM || 'TrustChain <noreply@trustchain.shop>';
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000'; // Final Frontend port
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://trustchain.shop'; // Production Fallback
 const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`;
 const resendClient = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 let smtpTransporter = null;
@@ -1718,7 +1718,7 @@ async function sendExecutedWillEmailsWithAttachment(willMetadata, txHash) {
   return { sent, failed, skipped };
 }
 
-async function sendStakeholderCreationEmails(willMetadata, { uploadUrl = null, claimId = null } = {}) {
+async function sendStakeholderCreationEmails(willMetadata, { uploadUrl = null, claimId = null, txHash = null } = {}) {
   const transporter = createEmailTransporter();
   if (!transporter) {
     console.error('[EMAIL] No provider configured for stakeholder notifications.');
@@ -1734,6 +1734,17 @@ async function sendStakeholderCreationEmails(willMetadata, { uploadUrl = null, c
   const willId = willMetadata.id || 'N/A';
   const conditionSummary = buildExecutionConditionForWill(willMetadata.conditions);
   const isDeathFlow = hasDeathCondition(willMetadata.conditions);
+
+  console.log(`[RESEND] Sending stakeholder creation emails for ${willId} to: ${allRecipients.join(', ')}`);
+  
+  // Proactively generate the PDF for attachment
+  let pdfBuffer = null;
+  try {
+    const creationTxHash = txHash || `CREATED-${Date.now()}`;
+    pdfBuffer = await generateTrustChainPdfBuffer(willMetadata, creationTxHash);
+  } catch (pdfErr) {
+    console.error(`[PDF] Generation failed for stakeholder mail ${willId}:`, pdfErr.message);
+  }
 
   let sent = 0;
   let failed = 0;
@@ -1778,6 +1789,7 @@ async function sendStakeholderCreationEmails(willMetadata, { uploadUrl = null, c
       }
 
       bodyHtml += `
+          <p>The official signed Digital Will document is attached to this email for your records.</p>
           <p style="margin-top: 30px;">Thank you for using TrustChain.</p>
           <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
           <p style="font-size: 11px; color: #999; text-align: center;">TrustChain: Secure, Automated, Decentralized Wills.</p>
@@ -1787,7 +1799,13 @@ async function sendStakeholderCreationEmails(willMetadata, { uploadUrl = null, c
       await sendEmailViaResend({
         to: email,
         subject,
-        html: bodyHtml
+        html: bodyHtml,
+        attachments: pdfBuffer ? [
+          {
+            filename: `TrustChain_Will_${willId}.pdf`,
+            content: pdfBuffer,
+          }
+        ] : []
       });
       sent += 1;
       // Stagger to stay under rate limit
@@ -1820,16 +1838,39 @@ async function sendReadyToClaimEmails(willMetadata) {
   }
 
   const willId = willMetadata?.id || 'Will';
+  const claimUrl = `${FRONTEND_URL}/?view=claim&willId=${encodeURIComponent(willId)}`;
+  
   console.log(`[RESEND] Sending "Ready to Claim" alert for ${willId} to: ${uniqueRecipients.join(', ')}`);
 
+  // Proactively generate the PDF for attachment
+  let pdfBuffer = null;
+  try {
+    const statusPlaceholder = "CONDITION_MET (Pending Execution)";
+    pdfBuffer = await generateTrustChainPdfBuffer(willMetadata, statusPlaceholder);
+  } catch (pdfErr) {
+    console.error(`[PDF] Generation failed for ready-to-claim mail ${willId}:`, pdfErr.message);
+  }
+
   const html = `
-    <h2>TrustChain: Digital Will Execution Conditions Met!</h2>
-    <p>Your Digital Will (<strong>${escapeHtml(willId)}</strong>) is now ready for execution.</p>
-    <p>The defined conditions have been verified on the blockchain. You can now visit the TrustChain portal to trigger the final inheritance distribution using your MetaMask wallet.</p>
-    <p>Will Name: <strong>${escapeHtml(willMetadata.name || 'Untitled Will')}</strong></p>
-    <p>Execution Trigger: <strong>${escapeHtml(buildConditionSummary(willMetadata.conditions))}</strong></p>
-    <br/>
-    <p>Connect your wallet to claim the distribution.</p>
+    <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 12px; padding: 30px;">
+      <h2 style="color: #1a365d; text-align: center;">TrustChain: Will Ready for Execution</h2>
+      <p>Digital Will (<strong>${escapeHtml(willId)}</strong>) conditions have been verified on the blockchain.</p>
+      
+      <p>The defined instructions are now ready for final distribution. You can trigger the inheritance transfer using your MetaMask wallet below.</p>
+      
+      <p><strong>Will Name:</strong> ${escapeHtml(willMetadata.name || 'Untitled Will')}</p>
+      <p><strong>Execution Trigger:</strong> ${escapeHtml(buildConditionSummary(willMetadata.conditions))}</p>
+
+      <div style="text-align: center; padding: 25px; background: #f0f7ff; border-radius: 10px; margin: 20px 0;">
+         <p style="font-weight: bold; font-size: 16px; color: #1a365d; margin-bottom: 15px;">Ready for Distribution</p>
+         <a href="${escapeHtml(claimUrl)}" style="background: #3b82f6; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; display: inline-block;">
+           Claim Distribution
+         </a>
+      </div>
+      
+      <p>The official signed Digital Will document is attached to this email for your records.</p>
+      <p style="font-size: 12px; color: #718096; margin-top: 20px;">Secure, Automated Asset Inheritance via TrustChain.</p>
+    </div>
   `;
 
   const records = readJsonArraySafe(blockchainRecordsFile);
@@ -1848,7 +1889,13 @@ async function sendReadyToClaimEmails(willMetadata) {
       await sendEmailViaResend({
         to: email,
         subject: `TrustChain: Will Ready for Execution (${willId})`,
-        html
+        html,
+        attachments: pdfBuffer ? [
+          {
+            filename: `TrustChain_Ready_${willId}.pdf`,
+            content: pdfBuffer,
+          }
+        ] : []
       });
       sent += 1;
       // 500ms delay to ensure we stay under 5 emails/sec safely
