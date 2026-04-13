@@ -2893,18 +2893,17 @@ app.post("/verify-death-and-execute", deathCertificateUpload.single("certificate
 
     console.log(`[DEATH-VERIFY] Processing death certification for will: ${willId}`);
     
-    // 1. Death-certificate authenticity checks are bypassed by product requirement.
-    // Any uploaded allowed file type should proceed directly to execution flow.
-    console.warn(`[DEATH-VERIFY] ⚠ Bypass enabled: accepting uploaded file without authenticity verification for ${willId}`);
+    // 1. SIMULATED PROCESSING DELAY (Requested by user)
+    // We wait 20 seconds to simulate a "heavy AI authenticity check" 
+    console.log(`[DEATH-VERIFY] Starting simulated AI authenticity check (20s delay)...`);
+    await new Promise(resolve => setTimeout(resolve, 20000));
+    console.log(`[DEATH-VERIFY] Simulated AI check complete.`);
 
-    console.log(`[DEATH-VERIFY] ✅ Certificate verified. Checking canExecute status...`);
+    // 2. Bypass ML/AI verification as requested - always accept the document
+    console.log(`[DEATH-VERIFY] ✅ Certificate accepted via bypass. Proceeding to blockchain release...`);
     
     const { provider, wallet, contract } = await getDigitalWillSignerAndContract();
 
-    // 2. No pre-blocking canExecute check here. We directly verify death and execute.
-    
-    const nonceRef = { value: await provider.getTransactionCount(wallet.address, 'pending') };
-    
     // 3. Mark death verified on-chain
     console.log(`[DEATH-VERIFY] Calling verifyDeath for ${willId}...`);
     const verifyReceipt = await sendContractTx(
